@@ -1,0 +1,26 @@
+[project]
+name = "my_fastapi_agent"
+version = "0.1.0"
+description = "Agentic test generator"
+dependencies = [
+    "fastapi",
+    "uvicorn[standard]",
+    "pydantic",
+    "langgraph",
+    "langgraph-checkpoint-sqlite",
+    "aiosqlite",
+    "tree-sitter",
+    "tree-sitter-python",
+    "qdrant-client",
+    "python-dotenv",
+    "openai",
+    "httpx",
+    "jira"
+]
+
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

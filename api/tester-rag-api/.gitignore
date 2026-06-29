@@ -1,0 +1,31 @@
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Environment
+.env
+
+# IDE / OS
+.idea/
+.DS_Store
+*.swp
+
+# Runtime data
+data/
+app/data/
+
+# Scratch / experiments
+scratch/
+
+# Flutter / Dart build artifacts
+**/.dart_tool/
+**/build/
+**/.flutter-plugins
+**/.flutter-plugins-dependencies
+**/.packages
+**/pubspec.lock

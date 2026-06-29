@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pytest *)",
+      "Bash(python *)",
+      "Bash(./.venv/bin/python *)",
+      "Bash(dart analyze *)",
+      "Bash(dart test *)",
+      "Bash(./venv/bin/python -m pytest -q)",
+      "Bash(dart format *)",
+      "Bash(././.venv/bin/python -m pytest -q)",
+      "Bash(.venv/bin/python -m pytest -q)"
+    ]
+  }
+}

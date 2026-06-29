@@ -1,0 +1,35 @@
+# OS / IDE
+.DS_Store
+.idea/
+*.swp
+
+# Python
+**/.venv/
+**/__pycache__/
+**/*.py[cod]
+**/*.egg-info/
+**/.pytest_cache/
+**/.mypy_cache/
+**/.ruff_cache/
+
+# Environment
+**/.env
+**/.env.local
+
+# Node / Next.js
+**/node_modules/
+**/.next/
+**/out/
+**/.vercel
+**/*.tsbuildinfo
+
+# Runtime / local data
+**/data/
+api/tester-rag-api/app/data/
+api/tester-rag-api/scratch/
+
+# Flutter / Dart build artifacts
+**/.dart_tool/
+**/build/
+**/.flutter-plugins
+**/.flutter-plugins-dependencies
