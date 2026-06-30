@@ -129,6 +129,13 @@ class JiraService:
             )
             return False
 
+        if not settings.JIRA_WRITE_ENABLED:
+            logger.warning(
+                "transition_ticket called but JIRA_WRITE_ENABLED=false — transition blocked for %s",
+                issue_key,
+            )
+            return False
+
         self._client.transition_issue(issue_key, match["id"])
         logger.info(
             "Transitioned %s via '%s' → '%s'",

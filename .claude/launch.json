@@ -1,0 +1,19 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "backend-api",
+      "cwd": "api/tester-rag-api",
+      "runtimeExecutable": ".venv/bin/python",
+      "runtimeArgs": ["main.py"],
+      "port": 8000
+    },
+    {
+      "name": "web-ui",
+      "cwd": "ui/code_agent_web",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev"],
+      "port": 3000
+    }
+  ]
+}

@@ -1,3 +1,5 @@
+from contextlib import asynccontextmanager
+
 import uvicorn
 
 from fastapi import FastAPI
@@ -13,11 +15,25 @@ from app.api.explorer import router as explorer_router
 from app.api.code_agent import code_agent_projects_router, code_agent_router
 from app.api.po import po_router
 from app.core.config import settings
-from app.core.logging_config import setup_logging
+from app.core.logging_config import get_logger, setup_logging
+from app.orchestration.epic_runner import reconcile_interrupted_epics
 
 setup_logging()
+logger = get_logger("main")
 
-app = FastAPI()
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    # Settle epic runs orphaned by a prior process so the UI never shows a stale
+    # "Executing" for a run that is no longer alive.
+    try:
+        await reconcile_interrupted_epics()
+    except Exception:  # noqa: BLE001
+        logger.exception("Startup epic reconciliation failed")
+    yield
+
+
+app = FastAPI(lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,

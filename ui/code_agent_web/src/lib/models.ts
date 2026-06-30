@@ -6,13 +6,34 @@ export interface ProjectSummary {
   updated_at: string;
 }
 
+export interface ClarificationOption {
+  id: string;
+  label: string;
+  description: string;
+}
+
+export interface ClarificationQuestion {
+  id: string;
+  question: string;
+  context: string;
+  options: ClarificationOption[];
+}
+
+export interface ClarifyAnswer {
+  question_id: string;
+  question: string;
+  option_id: string;
+  option_label: string;
+  option_description: string;
+}
+
 export interface TicketSummary {
   id: number;
   project_id: number;
   title: string;
   description?: string;
   ticket_type: 'feature' | 'bug' | string;
-  status: 'pending' | 'planning' | 'awaiting_approval' | 'developing' | 'verifying' | 'completed' | 'failed' | 'rejected' | string;
+  status: 'pending' | 'planning' | 'awaiting_clarification' | 'awaiting_approval' | 'developing' | 'verifying' | 'completed' | 'failed' | 'rejected' | string;
   run_id?: string;
   created_at: string;
   updated_at: string;
@@ -20,6 +41,8 @@ export interface TicketSummary {
   jira_key?: string;
   jira_issue_type?: string;
   jira_parent_key?: string;
+  jira_status?: string;
+  jira_priority?: string;
 }
 
 export interface TokenUsage {
@@ -71,6 +94,7 @@ export interface CodeAgentRunStatus {
   iteration?: number;
   plan?: Record<string, any>;
   acceptance_criteria: string[];
+  clarification_questions?: ClarificationQuestion[];
   file_changes: Array<{ path: string; action: string; [key: string]: any }>;
   diffs: Array<{ path: string; diff: string; [key: string]: any }>;
   verifier_report?: Record<string, any>;
@@ -113,6 +137,36 @@ export interface JiraStatusCheck {
   configured: boolean;
   base_url?: string;
   user_email?: string;
+}
+
+export interface EpicChildRun {
+  ticket_id: number;
+  jira_key?: string;
+  title?: string;
+  run_id?: string;
+  status: string;
+}
+
+export interface EpicPlan {
+  levels: number[][];
+  edges?: Record<string, number[]>;
+  reasoning?: string;
+  had_cycle?: boolean;
+  nodes?: Array<{ ticket_id: number; jira_key?: string; title?: string }>;
+}
+
+export interface EpicRun {
+  epic_run_id: string;
+  epic_ticket_id: number;
+  epic_jira_key?: string;
+  status: string;
+  workspace_mode: string;
+  integration_branch?: string;
+  plan?: EpicPlan;
+  children: EpicChildRun[];
+  error?: string;
+  created_at?: string;
+  updated_at?: string;
 }
 
 export interface ProjectSkillSummary {

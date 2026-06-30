@@ -143,6 +143,19 @@ def discover_context(
             files=[str(project_guide.get("path") or "AGENTS.md")],
             meta={"tool": "project_guide"},
         )
+
+    # Always include dependency manifests so the LLM knows which packages exist.
+    manifest_candidates = ["pubspec.yaml", "pubspec.yml", "package.json"]
+    manifest_summaries: list[dict[str, Any]] = []
+    for name in manifest_candidates:
+        full = os.path.join(project_path, name)
+        if os.path.isfile(full):
+            try:
+                content = read_file(project_path, name, max_chars=8000)
+                manifest_summaries.append({"path": name, "preview": content, "lines": content.count("\n") + 1})
+            except OSError:
+                pass
+
     explorer = ProjectExplorer(project_path)
     explore_tree = explorer.explore("lib")
 
@@ -165,6 +178,7 @@ def discover_context(
 
     return {
         "project_guide": project_guide,
+        "manifest_summaries": manifest_summaries,
         "search_terms": terms,
         "grep_matches": [
             {

@@ -23,7 +23,18 @@ async def planner_node(state: FeatureRunState) -> dict:
             attachment_paths=state.get("attachment_paths") or None,
             linked_issues_context=state.get("linked_issues_context"),
             acceptance_criteria_hint=state.get("acceptance_criteria_hint") or None,
+            clarification_answers=state.get("clarification_answers") or None,
         )
+        questions = result.get("questions") or []
+        if questions:
+            logger.info("Planner awaiting clarification run_id=%s questions=%d", run_id, len(questions))
+            return {
+                "status": "awaiting_clarification",
+                "context_bundle": result["context_bundle"],
+                "plan": result["plan"],
+                "clarification_questions": questions,
+                "messages": result["messages"],
+            }
         logger.info("Planner success run_id=%s status=awaiting_approval", run_id)
         return {
             "status": "awaiting_approval",

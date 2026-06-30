@@ -3,6 +3,7 @@ from typing import Annotated, Any, Literal, TypedDict
 
 RunStatus = Literal[
     "planning",
+    "awaiting_clarification",
     "awaiting_approval",
     "developing",
     "verifying",
@@ -47,6 +48,9 @@ class FeatureRunState(TypedDict, total=False):
     rejected: bool
     merge_report: dict[str, Any]
     truncated: bool  # True when dev agent hit step limit without completing
+    # Planner clarification Q&A
+    clarification_questions: list[dict[str, Any]]  # questions emitted by planner first pass
+    clarification_answers: list[dict[str, Any]]  # user answers before second planner pass
     # Jira integration: optional context passed to the planner
     attachment_paths: list[str]  # local paths to downloaded Jira image attachments
     linked_issues_context: str | None  # formatted text of linked Jira issue summaries
@@ -79,6 +83,8 @@ def initial_state(run_id: str, user_request: str, project_path: str) -> FeatureR
         rejected=False,
         merge_report={},
         truncated=False,
+        clarification_questions=[],
+        clarification_answers=[],
         attachment_paths=[],
         linked_issues_context=None,
         acceptance_criteria_hint=[],

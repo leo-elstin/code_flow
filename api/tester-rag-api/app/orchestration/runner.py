@@ -1,6 +1,8 @@
 import asyncio
 import os
+import re
 import sqlite3
+import subprocess
 import uuid
 from contextlib import asynccontextmanager
 from typing import Any, AsyncIterator, Awaitable, Callable
@@ -20,6 +22,100 @@ from app.services.run_index import sync_missing_from_checkpoints, upsert_run
 from app.services.worktree import WorktreeError, prepare_workspace
 
 logger = get_logger("runner")
+
+_DART_PATH_RE = re.compile(r"(?:lib|test)/[\w/.-]+\.dart")
+
+# Keywords that indicate a DI registration file is needed but not named explicitly
+_DI_KEYWORDS_RE = re.compile(
+    r"inject(?:able|ion)|register(?:ed|ation)?|GetIt|dependency.inject|DI\b|"
+    r"singleton|@lazySingleton|@injectable|di\.register|sl\.register",
+    re.IGNORECASE,
+)
+
+# Grep patterns used to locate the DI setup file inside the project
+_DI_GREP_PATTERNS = (
+    r"registerFactory\|registerSingleton\|registerLazySingleton\|GetIt\.instance",
+)
+
+
+def _find_di_file(project_path: str) -> str | None:
+    """Grep the project for GetIt registration calls and return the first matching path."""
+    try:
+        result = subprocess.run(
+            ["grep", "-rl", "--include=*.dart", "-E",
+             r"registerFactory|registerSingleton|registerLazySingleton|GetIt\.instance",
+             os.path.join(project_path, "lib")],
+            capture_output=True, text=True, timeout=10,
+        )
+        for line in result.stdout.splitlines():
+            rel = os.path.relpath(line.strip(), project_path)
+            if rel.startswith("lib") and rel.endswith(".dart"):
+                return rel
+    except Exception:
+        pass
+    return None
+
+
+def _augment_plan_from_verifier(
+    plan: dict[str, Any],
+    verifier_report: dict[str, Any] | None,
+    project_path: str | None = None,
+) -> dict[str, Any]:
+    """Return a copy of *plan* with wiring files added to files_to_modify when
+    the verifier flagged them as missing.
+
+    Two strategies:
+    1. Explicit paths: dart paths in issues[].file or regex-matched from required_fixes text.
+    2. DI keyword detection: when the verifier mentions injectable/registration/GetIt
+       but names no file, grep the project to find the actual DI setup file.
+    """
+    if not verifier_report:
+        return plan
+
+    existing: set[str] = set()
+    for key in ("files_to_create", "files_to_modify"):
+        for item in plan.get(key, []) or []:
+            path = item.get("path") if isinstance(item, dict) else str(item)
+            if path:
+                existing.add(str(path).lstrip("/"))
+
+    found: set[str] = set()
+    all_text = " ".join(
+        [
+            str(issue.get("reason") or "") if isinstance(issue, dict) else str(issue)
+            for issue in (verifier_report.get("issues") or [])
+        ]
+        + [str(f) for f in (verifier_report.get("required_fixes") or [])]
+        + [verifier_report.get("headline") or ""]
+    )
+
+    # Strategy 1 — explicit dart paths in structured issues
+    for issue in verifier_report.get("issues") or []:
+        if isinstance(issue, dict) and issue.get("file"):
+            found.add(str(issue["file"]).lstrip("/"))
+
+    # Strategy 1b — dart paths embedded in required_fixes prose
+    for match in _DART_PATH_RE.findall(all_text):
+        found.add(match.lstrip("/"))
+
+    # Strategy 2 — DI keyword detection → grep for the actual registration file
+    if project_path and _DI_KEYWORDS_RE.search(all_text):
+        di_file = _find_di_file(project_path)
+        if di_file and di_file not in existing:
+            found.add(di_file)
+            logger.info("DI keyword detected in verifier report; found registration file: %s", di_file)
+
+    new_files = [p for p in sorted(found) if p and p not in existing]
+    if not new_files:
+        return plan
+
+    augmented = dict(plan)
+    augmented["files_to_modify"] = list(plan.get("files_to_modify") or []) + [
+        {"path": p, "reason": "Added by retry: verifier flagged this file as missing"}
+        for p in new_files
+    ]
+    logger.info("Augmented retry plan with %d file(s) from verifier report: %s", len(new_files), new_files)
+    return augmented
 
 
 def _enable_wal(db_path: str) -> None:
@@ -278,11 +374,48 @@ class CodeAgentRunner:
                     update_ticket_status_by_run(run_id_val, status_val)
             return snapshot.values  # type: ignore[return-value]
 
+    async def clarify_run(
+        self,
+        run_id: str,
+        answers: list[dict[str, Any]],
+    ) -> FeatureRunState | None:
+        """Re-run the planner with the user's answers to clarification questions."""
+        from app.agents.roles.planner import run_planner
+
+        logger.info("Clarifying run run_id=%s answers=%d", run_id, len(answers))
+        current = await self.get_state(run_id)
+        if not current:
+            return None
+        if current.get("status") != "awaiting_clarification":
+            raise ValueError(f"Run {run_id} is not awaiting clarification (status={current.get('status')})")
+
+        result = await run_planner(
+            current["user_request"],
+            current["project_path"],
+            run_id=run_id,
+            attachment_paths=current.get("attachment_paths") or None,
+            linked_issues_context=current.get("linked_issues_context"),
+            acceptance_criteria_hint=current.get("acceptance_criteria_hint") or None,
+            clarification_answers=answers,
+        )
+
+        patch: dict[str, Any] = {
+            "status": "awaiting_approval",
+            "clarification_answers": answers,
+            "clarification_questions": [],
+            "context_bundle": result["context_bundle"],
+            "plan": result["plan"],
+            "acceptance_criteria": result["acceptance_criteria"],
+            "messages": result["messages"],
+        }
+        return await self._patch_state(run_id, patch)
+
     async def approve_run(
         self,
         run_id: str,
         *,
         workspace_mode: str = "worktree",
+        base_ref: str | None = None,
     ) -> FeatureRunState | None:
         logger.info("Approving run run_id=%s workspace_mode=%s", run_id, workspace_mode)
         current = await self.get_state(run_id)
@@ -296,11 +429,14 @@ class CodeAgentRunner:
         try:
             # prepare_workspace runs `pub get` (up to minutes); keep it off the
             # event loop so the API and other runs stay responsive.
+            # base_ref lets an epic-run branch this child's worktree off the
+            # shared integration branch instead of the project's HEAD.
             workspace = await asyncio.to_thread(
                 prepare_workspace,
                 current["project_path"],
                 run_id=run_id,
                 workspace_mode=mode,  # type: ignore[arg-type]
+                base_ref=base_ref,
             )
             logger.info(
                 "Workspace ready run_id=%s mode=%s path=%s",
@@ -430,7 +566,11 @@ class CodeAgentRunner:
             )
             seed.update(lineage)
             seed["max_iterations"] = settings.CODE_AGENT_MAX_VERIFIER_ITERATIONS
-            seed["plan"] = current.get("plan", {})
+            seed["plan"] = _augment_plan_from_verifier(
+                current.get("plan") or {},
+                current.get("verifier_report"),
+                project_path=current.get("project_path"),
+            )
             seed["acceptance_criteria"] = current.get("acceptance_criteria", [])
             seed["context_bundle"] = current.get("context_bundle", {})
             seed["status"] = "awaiting_approval"

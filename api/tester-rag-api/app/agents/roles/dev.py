@@ -7,7 +7,7 @@ from typing import Any
 
 from app.core.config import settings
 from app.core.logging_config import get_logger
-from app.services.generation import get_generation_client
+from app.services.generation import acompletion
 from app.services.run_activity import append_activity
 from app.tools.dart_tools import is_generated_dart_path, maybe_run_build_runner, run_dart_analyze
 from app.tools.filesystem import write_file, roll_back_file
@@ -530,7 +530,6 @@ async def run_dev(
         planned_test_files=planned_test_files,
     )
 
-    client = get_generation_client()
     messages: list[dict[str, Any]] = [
         {"role": "system", "content": DEV_SYSTEM_LOOP},
         {
@@ -563,7 +562,7 @@ async def run_dev(
                 meta={"model": dev_model, "state": "started"},
             )
 
-        response = await client.chat.completions.create(
+        response = await acompletion(
             model=dev_model,
             messages=messages,
             tools=tool_schemas,

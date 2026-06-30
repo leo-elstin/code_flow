@@ -1,30 +1,35 @@
 import json
 from typing import Any
 
-from openai import AsyncOpenAI
-from openai.types.chat import ChatCompletionMessageParam
+import litellm
 
 from app.core.config import settings
 from app.services.run_activity import append_activity
 
-_client: AsyncOpenAI | None = None
-
-
-def get_generation_client() -> AsyncOpenAI:
-    """Return the OpenAI client used for chat completions."""
-    global _client
-    if _client is None:
-        _client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
-    return _client
+# Configure litellm once at import time
+litellm.api_key = settings.OPENAI_API_KEY
+if settings.LITELLM_API_BASE:
+    litellm.api_base = settings.LITELLM_API_BASE
+litellm.set_verbose = settings.LITELLM_VERBOSE
 
 
 def get_generation_model() -> str:
     return settings.OPENAI_CHAT_MODEL
 
 
+async def acompletion(
+    *,
+    model: str,
+    messages: list,
+    **kwargs: Any,
+) -> Any:
+    """Thin async wrapper around litellm.acompletion for tool-calling and streaming callers."""
+    return await litellm.acompletion(model=model, messages=messages, **kwargs)
+
+
 async def chat_completion_json(
     *,
-    messages: list[ChatCompletionMessageParam],
+    messages: list,
     run_id: str | None = None,
     phase: str = "system",
     label: str = "LLM call",
@@ -40,8 +45,7 @@ async def chat_completion_json(
             meta={"model": model, "state": "started"},
         )
 
-    client = get_generation_client()
-    response = await client.chat.completions.create(
+    response = await litellm.acompletion(
         model=model,
         messages=messages,
         response_format={"type": "json_object"},

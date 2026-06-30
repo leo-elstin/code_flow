@@ -8,6 +8,7 @@ from app.services.generation import chat_completion_json
 from app.services.run_activity import append_activity
 from app.core.config import settings
 from app.tools.dart_tools import (
+    check_di_registrations,
     ensure_pub_dependencies,
     is_generated_dart_path,
     maybe_run_build_runner,
@@ -185,6 +186,40 @@ def compare_to_plan(
                 )
                 required_fixes.append(msg)
 
+    # DI registration evidence. injectable/get_it registrations land in generated
+    # *.config.dart files that are usually gitignored, so they never show in the
+    # diff the LLM reviewer reads — which made it repeatedly hallucinate "DI
+    # integration is missing" even though build_runner had wired the service.
+    # Read the generated config from disk and surface hard evidence instead.
+    di_registrations = check_di_registrations(
+        worktree_path, _planned_paths(plan.get("files_to_create", []))
+    )
+    if di_registrations.get("checked") and build_runner.get("passed", True):
+        if run_id:
+            append_activity(
+                run_id,
+                type="tool",
+                phase="verifier",
+                title=(
+                    "DI registration verified"
+                    if not di_registrations.get("missing")
+                    else "DI registration missing"
+                ),
+                files=sorted(di_registrations.get("registered", {}).values()),
+                meta={
+                    "tool": "di_check",
+                    "registered": list(di_registrations.get("registered", {})),
+                    "missing": di_registrations.get("missing", []),
+                },
+            )
+        for cls in di_registrations.get("missing", []):
+            msg = (
+                f"{cls} is annotated injectable but is not registered in any generated "
+                "*.config.dart — run build_runner so it joins the runtime DI graph"
+            )
+            issues.append({"severity": "blocker", "file": None, "reason": msg})
+            required_fixes.append(msg)
+
     analyze: dict[str, Any] = {"passed": True, "skipped": True, "targets": dart_targets}
     if dart_targets and pub_get.get("passed", True) and build_runner.get("passed", True):
         analyze = run_dart_analyze(worktree_path, dart_targets)
@@ -282,6 +317,7 @@ def compare_to_plan(
         "build_runner": build_runner,
         "analyze": analyze,
         "test_results": test_results,
+        "di_registrations": di_registrations,
         "changed_files": sorted(changed),
         "synced_from_project": synced_from_project,
         "dev_targets": sorted(dev_targets),
@@ -346,7 +382,18 @@ async def run_verifier(
                         "You verify a Flutter feature implementation against a plan. "
                         "Deterministic checks already passed. "
                         "Return JSON: {passed: bool, issues: [], required_fixes: [], reasoning: string optional}. "
-                        "Set passed=true unless a planned acceptance criterion is clearly unmet."
+                        "Set passed=true unless a planned acceptance criterion is clearly unmet.\n"
+                        "IMPORTANT — generated code is invisible in diffs. Files matching "
+                        "*.config.dart, *.g.dart, *.freezed.dart, *.mocks.dart are build_runner "
+                        "output and are gitignored, so they will NOT appear in the diffs you are "
+                        "shown. Dependency-injection registrations (injectable/get_it) live in "
+                        "*.config.dart. Do NOT flag a service as 'not registered', 'missing DI "
+                        "wiring', or 'not resolvable through the app DI path' based on its absence "
+                        "from the diff. The field deterministic_gate.di_registrations is the source "
+                        "of truth: every class listed under its 'registered' map is confirmed wired "
+                        "into the runtime DI graph. Only raise a DI blocker for a class that appears "
+                        "in di_registrations.missing. A class carrying @injectable/@lazySingleton/"
+                        "@singleton needs no manual registration call — build_runner generates it."
                     ),
                 },
                 {
