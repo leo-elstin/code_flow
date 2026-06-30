@@ -1,6 +1,8 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { TicketSummary, CodeAgentRunStatus } from '@/lib/models';
 import { 
   ArrowLeft,
@@ -36,6 +38,9 @@ import {
 import { Textarea } from '@/components/ui/textarea';
 import ActivityLogSection from './ActivityLogSection';
 import ExecutionsSection from './ExecutionsSection';
+import RunTimeline from './RunTimeline';
+import ClarificationPanel from './ClarificationPanel';
+import { ClarifyAnswer } from '@/lib/models';
 
 interface CenterPaneProps {
   ticket: TicketSummary | null;
@@ -56,6 +61,7 @@ interface CenterPaneProps {
   onMergeRun: () => Promise<void>;
   onClearActivityLogs: () => void;
   onStopWatchingRun: () => void;
+  onClarifyRun: (answers: ClarifyAnswer[]) => Promise<void>;
 }
 
 export default function CenterPane({
@@ -77,9 +83,19 @@ export default function CenterPane({
   onMergeRun,
   onClearActivityLogs,
   onStopWatchingRun,
+  onClarifyRun,
 }: CenterPaneProps) {
   const [activeTab, setActiveTab] = useState('overview');
   const [isApproveOpen, setIsApproveOpen] = useState(false);
+
+  const planMarkdown: string | undefined = run?.plan?.plan_markdown as string | undefined;
+
+  // Auto-switch to Plan tab when plan is ready for approval
+  useEffect(() => {
+    if (run?.status === 'awaiting_approval' && planMarkdown) {
+      setActiveTab('plan');
+    }
+  }, [run?.status, planMarkdown]);
   const [isRejectOpen, setIsRejectOpen] = useState(false);
   const [isRevertOpen, setIsRevertOpen] = useState(false);
   const [isMergeOpen, setIsMergeOpen] = useState(false);
@@ -303,6 +319,7 @@ export default function CenterPane({
     if (isBusy || reverting || merging) return 'Working...';
     if (!run) return 'Start Run';
     if (run.status === 'failed' || run.status === 'rejected') return 'Retry Run';
+    if (run.status === 'awaiting_clarification') return 'Answer Questions';
     if (run.status === 'awaiting_approval') return 'Review & Approve Plan';
     if (!run.is_running && ['planning', 'developing', 'verifying', 'qa'].includes(run.status)) {
       return 'Resume Run';
@@ -316,6 +333,9 @@ export default function CenterPane({
       handleStartWork();
     } else if (run.status === 'failed' || run.status === 'rejected') {
       onRetryRun().catch((err) => setActionError(err.message || 'Failed to retry run'));
+    } else if (run.status === 'awaiting_clarification') {
+      // scroll to top of overview — the panel is visible there
+      setActiveTab('overview');
     } else if (run.status === 'awaiting_approval') {
       setIsApproveOpen(true);
     } else if (!run.is_running && ['planning', 'developing', 'verifying', 'qa'].includes(run.status)) {
@@ -366,17 +386,56 @@ export default function CenterPane({
                 Overview
               </TabsTrigger>
               <TabsTrigger
+                value="plan"
+                disabled={!planMarkdown}
+                className="data-[state=active]:bg-transparent data-[state=active]:shadow-none data-[state=active]:border-b-2 data-[state=active]:border-blue-600 rounded-none h-full text-xs font-semibold px-1"
+              >
+                Plan
+              </TabsTrigger>
+              <TabsTrigger
                 value="diffs"
                 disabled={!run || !run.diffs || run.diffs.length === 0}
                 className="data-[state=active]:bg-transparent data-[state=active]:shadow-none data-[state=active]:border-b-2 data-[state=active]:border-blue-600 rounded-none h-full text-xs font-semibold px-1"
               >
                 Code Changes ({run?.diffs?.length || 0})
               </TabsTrigger>
+              <TabsTrigger
+                value="timeline"
+                disabled={activityEvents.length === 0}
+                className="data-[state=active]:bg-transparent data-[state=active]:shadow-none data-[state=active]:border-b-2 data-[state=active]:border-blue-600 rounded-none h-full text-xs font-semibold px-1"
+              >
+                Timeline
+              </TabsTrigger>
             </TabsList>
           </div>
 
           <div className="flex-1 overflow-y-auto p-6 space-y-6 min-h-0">
             <TabsContent value="overview" className="m-0 space-y-6">
+              {/* Clarification questions panel */}
+              {run && run.status === 'awaiting_clarification' && (run.clarification_questions?.length ?? 0) > 0 && (
+                <Card className="border-amber-200 shadow-xs overflow-hidden">
+                  <ClarificationPanel
+                    questions={run.clarification_questions!}
+                    isBusy={isBusy}
+                    onSubmit={async (answers) => {
+                      setActionError('');
+                      try {
+                        await onClarifyRun(answers);
+                      } catch (err: any) {
+                        setActionError(err.message || 'Failed to submit answers');
+                      }
+                    }}
+                    onSkip={() => {
+                      // Submit with empty answers to let planner decide
+                      setActionError('');
+                      onClarifyRun([]).catch((err: any) =>
+                        setActionError(err.message || 'Failed to skip')
+                      );
+                    }}
+                  />
+                </Card>
+              )}
+
               {/* Failure summary if failed */}
               {(ticket.status === 'failed' || (run && (run.status === 'failed' || run.status === 'rejected'))) && (
                 <Card className="bg-rose-50 border-rose-200/60 shadow-xs">
@@ -474,6 +533,29 @@ export default function CenterPane({
               </div>
             </TabsContent>
 
+            <TabsContent value="plan" className="m-0">
+              {planMarkdown ? (
+                <article className="prose prose-sm prose-slate max-w-none select-text
+                  prose-headings:font-bold prose-headings:text-slate-800
+                  prose-h1:text-base prose-h2:text-sm prose-h3:text-xs
+                  prose-p:text-xs prose-p:text-slate-600 prose-p:leading-relaxed
+                  prose-li:text-xs prose-li:text-slate-600
+                  prose-code:text-[11px] prose-code:bg-slate-100 prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-code:text-slate-700 prose-code:font-mono prose-code:before:content-none prose-code:after:content-none
+                  prose-pre:bg-slate-950 prose-pre:text-slate-100 prose-pre:text-[11px] prose-pre:rounded-lg prose-pre:overflow-x-auto
+                  prose-table:text-xs prose-th:text-xs prose-th:font-semibold prose-th:text-slate-700 prose-td:text-xs prose-td:text-slate-600
+                  prose-a:text-blue-600 prose-a:no-underline hover:prose-a:underline
+                  prose-blockquote:border-blue-300 prose-blockquote:text-slate-500 prose-blockquote:text-xs
+                  prose-strong:text-slate-800 prose-strong:font-semibold
+                ">
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                    {planMarkdown}
+                  </ReactMarkdown>
+                </article>
+              ) : (
+                <p className="text-xs text-slate-400 italic">No plan document available.</p>
+              )}
+            </TabsContent>
+
             <TabsContent value="diffs" className="m-0 space-y-4">
               {run?.diffs && run.diffs.map((diffItem, index) => (
                 <Card key={index} className="border-slate-200 overflow-hidden bg-slate-950 font-mono text-[11px] shadow-sm">
@@ -506,6 +588,14 @@ export default function CenterPane({
                   </CardContent>
                 </Card>
               ))}
+            </TabsContent>
+
+            <TabsContent value="timeline" className="m-0">
+              <RunTimeline
+                events={activityEvents}
+                runStatus={run?.status ?? ticket.status}
+                mergedAt={run?.merge_report?.applied ? run.merge_report.merged_at : undefined}
+              />
             </TabsContent>
           </div>
         </Tabs>

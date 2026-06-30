@@ -14,6 +14,13 @@ class Settings:
         "CODE_AGENT_DEV_MODEL", os.getenv("OPENAI_CHAT_MODEL", "gpt-5.5")
     )
     OPENAI_EMBEDDING_MODEL: str = os.getenv("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small")
+    LITELLM_API_BASE: str | None = os.getenv("LITELLM_API_BASE")
+    LITELLM_VERBOSE: bool = os.getenv("LITELLM_VERBOSE", "false").lower() in ("1", "true", "yes")
+
+    # Jira write-back: disabled by default so agent runs never mutate Jira tickets.
+    # Set JIRA_WRITE_ENABLED=true to allow the pipeline to push status transitions
+    # back to Jira Cloud.
+    JIRA_WRITE_ENABLED: bool = os.getenv("JIRA_WRITE_ENABLED", "false").lower() in ("1", "true", "yes")
     INGEST_EMBEDDING_BATCH_SIZE: int = int(os.getenv("INGEST_EMBEDDING_BATCH_SIZE", "50"))
     INGEST_EMBEDDING_CONCURRENCY: int = int(os.getenv("INGEST_EMBEDDING_CONCURRENCY", "1"))
 

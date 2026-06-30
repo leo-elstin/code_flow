@@ -2,19 +2,21 @@
 
 import React, { useState } from 'react';
 import { ProjectSummary, TicketSummary } from '@/lib/models';
-import { getTopLevelTickets, getChildren } from '@/lib/jira-hierarchy';
+import { getTopLevelTickets, getChildren, classifyIssueType } from '@/lib/jira-hierarchy';
 import TicketTypeBadge from '@/components/TicketTypeBadge';
-import { 
-  Search, 
-  RefreshCw, 
-  Plus, 
-  Sparkles, 
-  Bug, 
+import {
+  Search,
+  RefreshCw,
+  Plus,
+  Sparkles,
+  Bug,
   ExternalLink,
   Trash2,
   HelpCircle,
   Lightbulb,
-  ChevronRight
+  ChevronRight,
+  ChevronDown,
+  Play
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -42,6 +44,7 @@ interface SidePanelProps {
   onSyncJiraTickets: () => void;
   onDeleteTicket: (id: number) => Promise<void>;
   onOpenChildren: (id: number) => void;
+  onRunEpic: (id: number) => void;
 }
 
 export default function SidePanel({
@@ -56,8 +59,10 @@ export default function SidePanel({
   onSyncJiraTickets,
   onDeleteTicket,
   onOpenChildren,
+  onRunEpic,
 }: SidePanelProps) {
   const [searchQuery, setSearchQuery] = useState('');
+  const [collapsedEpics, setCollapsedEpics] = useState<Set<number>>(new Set());
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [ticketTitle, setTicketTitle] = useState('');
   const [ticketType, setTicketType] = useState('feature');
@@ -101,17 +106,20 @@ export default function SidePanel({
   };
 
   // When searching, match across all tickets (incl. nested children) shown flat.
-  // Otherwise, show only top-level tickets grouped by hierarchy (Epics + orphans).
-  const baseTickets = searchQuery ? tickets : getTopLevelTickets(tickets);
-  const filteredTickets = baseTickets.filter((ticket) => {
-    if (!searchQuery) return true;
-    const query = searchQuery.toLowerCase();
-    return (
-      ticket.title.toLowerCase().includes(query) ||
-      ticket.id.toString().includes(query) ||
-      (ticket.jira_key && ticket.jira_key.toLowerCase().includes(query))
-    );
-  });
+  // Otherwise, group Epics (with inline-expandable children) above a "No epic" section.
+  const searchResults = searchQuery
+    ? tickets.filter((ticket) => {
+        const query = searchQuery.toLowerCase();
+        return (
+          ticket.title.toLowerCase().includes(query) ||
+          ticket.id.toString().includes(query) ||
+          (ticket.jira_key && ticket.jira_key.toLowerCase().includes(query))
+        );
+      })
+    : [];
+  const topLevel = getTopLevelTickets(tickets);
+  const epicTickets = topLevel.filter((t) => classifyIssueType(t) === 'epic');
+  const otherTickets = topLevel.filter((t) => classifyIssueType(t) !== 'epic');
 
   const getStatusBadge = (status: string) => {
     let classes = '';
@@ -152,6 +160,146 @@ export default function SidePanel({
       <Badge variant="outline" className={`text-[10px] px-2 py-0.5 font-semibold tracking-wide rounded-md ${classes}`}>
         {label}
       </Badge>
+    );
+  };
+
+  const toggleEpic = (id: number) =>
+    setCollapsedEpics((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+
+  const idLabel = (t: TicketSummary) => t.jira_key || `T-${t.id}`;
+
+  const priorityPill = (ticket: TicketSummary) => {
+    const p = ticket.jira_priority;
+    if (!p) return <span className="text-xs text-slate-300">—</span>;
+    const lp = p.toLowerCase();
+    const cls = /high|highest|critical|blocker|urgent/.test(lp)
+      ? 'text-rose-600'
+      : /low|lowest|trivial|minor/.test(lp)
+      ? 'text-slate-400'
+      : 'text-amber-600';
+    return <span className={`text-xs font-medium ${cls}`}>{p}</span>;
+  };
+
+  const renderLeaf = (ticket: TicketSummary) => {
+    const isSelected = ticket.id === selectedTicketId;
+    const childCount = getChildren(tickets, ticket).length;
+    return (
+      <div
+        key={ticket.id}
+        onClick={() => onSelectTicket(ticket.id)}
+        className={`group relative flex items-center px-3 py-2.5 rounded-lg border text-left cursor-pointer transition-all ${
+          isSelected
+            ? 'bg-blue-50/70 border-blue-500/60 shadow-sm ring-1 ring-blue-500/10'
+            : 'bg-white hover:bg-slate-50 border-slate-200/60 hover:border-slate-300/80 shadow-xs'
+        }`}
+      >
+        <div className={`w-16 text-xs font-semibold font-mono flex-shrink-0 ${ticket.jira_key ? 'text-blue-700' : 'text-slate-500'}`}>
+          {idLabel(ticket)}
+        </div>
+        <div className="flex-1 min-w-0 px-2">
+          <div className="flex items-center gap-1.5">
+            <TicketTypeBadge ticket={ticket} />
+            <h4 className={`text-xs truncate font-medium ${isSelected ? 'text-blue-900 font-semibold' : 'text-slate-700'}`}>
+              {ticket.title}
+            </h4>
+          </div>
+        </div>
+        <div className="w-24 flex-shrink-0 text-left">{getStatusBadge(ticket.status)}</div>
+        <div className="w-16 flex-shrink-0 text-left pr-1">{priorityPill(ticket)}</div>
+        {childCount > 0 && classifyIssueType(ticket) !== 'epic' && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              onOpenChildren(ticket.id);
+            }}
+            className="ml-1 flex items-center gap-0.5 flex-shrink-0 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-md px-1 py-1 transition-colors"
+            title={`View ${childCount} child ticket${childCount === 1 ? '' : 's'}`}
+          >
+            <span className="text-[9px] font-bold tabular-nums">{childCount}</span>
+            <ChevronRight size={14} />
+          </button>
+        )}
+        {ticket.source !== 'jira' && (
+          <button
+            onClick={(e) => handleDelete(e, ticket.id)}
+            className="absolute right-2 opacity-0 group-hover:opacity-100 transition-opacity p-1 text-slate-400 hover:text-rose-500 hover:bg-rose-50 rounded-md bg-white"
+            title="Delete ticket"
+          >
+            <Trash2 size={12} />
+          </button>
+        )}
+      </div>
+    );
+  };
+
+  const renderEpic = (epic: TicketSummary) => {
+    const isSelected = epic.id === selectedTicketId;
+    const children = getChildren(tickets, epic);
+    const done = children.filter((c) => c.status === 'completed').length;
+    const expanded = !collapsedEpics.has(epic.id);
+    return (
+      <div key={epic.id} className="space-y-1">
+        <div
+          onClick={() => onSelectTicket(epic.id)}
+          className={`group relative flex items-center px-3 py-2.5 rounded-lg border cursor-pointer transition-all ${
+            isSelected
+              ? 'bg-blue-50/70 border-blue-500/60 shadow-sm ring-1 ring-blue-500/10'
+              : 'bg-white hover:bg-slate-50 border-slate-200/60 hover:border-slate-300/80 shadow-xs'
+          }`}
+        >
+          {children.length > 0 ? (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                toggleEpic(epic.id);
+              }}
+              className="mr-1 flex-shrink-0 text-slate-400 hover:text-blue-600"
+              title={expanded ? 'Collapse' : 'Expand'}
+            >
+              {expanded ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
+            </button>
+          ) : (
+            <span className="mr-1 w-[15px] flex-shrink-0" />
+          )}
+          <div className={`w-16 text-xs font-semibold font-mono flex-shrink-0 ${epic.jira_key ? 'text-blue-700' : 'text-slate-500'}`}>
+            {idLabel(epic)}
+          </div>
+          <div className="flex-1 min-w-0 px-2">
+            <div className="flex items-center gap-1.5">
+              <TicketTypeBadge ticket={epic} />
+              <h4 className={`text-xs truncate font-semibold ${isSelected ? 'text-blue-900' : 'text-slate-800'}`}>
+                {epic.title}
+              </h4>
+            </div>
+          </div>
+          {children.length > 0 && (
+            <span className="text-[10px] font-bold tabular-nums text-slate-500 mr-2 flex-shrink-0">
+              {done}/{children.length}
+            </span>
+          )}
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              onRunEpic(epic.id);
+            }}
+            className="flex items-center gap-1 flex-shrink-0 px-2.5 py-1 rounded-md bg-slate-900 hover:bg-slate-800 text-white text-[11px] font-semibold transition-colors"
+            title="Execute epic"
+          >
+            <Play size={11} />
+            <span>Run</span>
+          </button>
+        </div>
+        {expanded && children.length > 0 && (
+          <div className="ml-3 pl-2 border-l border-slate-200 space-y-1">
+            {children.map(renderLeaf)}
+          </div>
+        )}
+      </div>
     );
   };
 
@@ -221,9 +369,10 @@ export default function SidePanel({
 
       {/* Table Headers */}
       <div className="px-5 py-2 text-[10px] font-bold text-slate-400 tracking-wider flex border-b border-slate-200/50 select-none">
-        <div className="w-14">ID</div>
+        <div className="w-16">ID</div>
         <div className="flex-1 px-2">TASK NAME</div>
         <div className="w-24 text-left">STATUS</div>
+        <div className="w-16 text-left">PRIORITY</div>
       </div>
 
       {/* Ticket List */}
@@ -234,85 +383,25 @@ export default function SidePanel({
               <HelpCircle size={24} className="text-slate-300 mb-2" />
               <p className="text-xs text-slate-400 font-medium">Select a project in the sidebar to view tickets.</p>
             </div>
-          ) : filteredTickets.length === 0 ? (
-            <div className="p-8 text-center text-xs text-slate-400 font-medium">
-              No tickets found in queue.
-            </div>
+          ) : searchQuery ? (
+            searchResults.length === 0 ? (
+              <div className="p-8 text-center text-xs text-slate-400 font-medium">No tickets found in queue.</div>
+            ) : (
+              <div className="p-2 space-y-1">{searchResults.map(renderLeaf)}</div>
+            )
+          ) : topLevel.length === 0 ? (
+            <div className="p-8 text-center text-xs text-slate-400 font-medium">No tickets found in queue.</div>
           ) : (
             <div className="p-2 space-y-1">
-              {filteredTickets.map((ticket) => {
-                const isSelected = ticket.id === selectedTicketId;
-                const childCount = getChildren(tickets, ticket).length;
-                return (
-                  <div
-                    key={ticket.id}
-                    onClick={() => onSelectTicket(ticket.id)}
-                    className={`group relative flex items-center px-3 py-2.5 rounded-lg border text-left cursor-pointer transition-all ${
-                      isSelected
-                        ? 'bg-blue-50/70 border-blue-500/60 shadow-sm ring-1 ring-blue-500/10'
-                        : 'bg-white hover:bg-slate-50 border-slate-200/60 hover:border-slate-300/80 shadow-xs'
-                    }`}
-                  >
-                    {/* Ticket ID */}
-                    <div className="w-14 text-xs font-semibold font-mono text-slate-500 flex-shrink-0">
-                      T-{ticket.id}
-                    </div>
-
-                    {/* Title and Jira info */}
-                    <div className="flex-1 min-w-0 px-2 pr-4">
-                      <div className="flex items-center gap-1.5">
-                        <TicketTypeBadge ticket={ticket} />
-                        {ticket.source === 'jira' && (
-                          <Badge variant="secondary" className="px-1 py-0 h-4 flex items-center bg-blue-100 text-blue-700 hover:bg-blue-100 rounded text-[9px] font-bold flex-shrink-0">
-                            Jira
-                          </Badge>
-                        )}
-                        <h4 className={`text-xs truncate font-medium ${
-                          isSelected ? 'text-blue-900 font-semibold' : 'text-slate-700'
-                        }`}>
-                          {ticket.title}
-                        </h4>
-                      </div>
-                      {ticket.jira_key && (
-                        <span className="text-[9px] font-semibold text-slate-400 font-mono mt-0.5 inline-block">
-                          {ticket.jira_key}
-                        </span>
-                      )}
-                    </div>
-
-                    {/* Status Badge */}
-                    <div className="w-24 flex-shrink-0 text-left">
-                      {getStatusBadge(ticket.status)}
-                    </div>
-
-                    {/* Open-children affordance (only when the ticket has nested tickets) */}
-                    {childCount > 0 && (
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onOpenChildren(ticket.id);
-                        }}
-                        className="ml-1 flex items-center gap-0.5 flex-shrink-0 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-md px-1 py-1 transition-colors"
-                        title={`View ${childCount} child ticket${childCount === 1 ? '' : 's'}`}
-                      >
-                        <span className="text-[9px] font-bold tabular-nums">{childCount}</span>
-                        <ChevronRight size={14} />
-                      </button>
-                    )}
-
-                    {/* Delete button (only show on hover, only for local tickets) */}
-                    {ticket.source !== 'jira' && (
-                      <button
-                        onClick={(e) => handleDelete(e, ticket.id)}
-                        className="absolute right-2 opacity-0 group-hover:opacity-100 transition-opacity p-1 text-slate-400 hover:text-rose-500 hover:bg-rose-50 rounded-md"
-                        title="Delete ticket"
-                      >
-                        <Trash2 size={12} />
-                      </button>
-                    )}
-                  </div>
-                );
-              })}
+              {epicTickets.map(renderEpic)}
+              {otherTickets.length > 0 && (
+                <>
+                  {epicTickets.length > 0 && (
+                    <div className="px-2 pt-3 pb-1 text-[10px] font-bold text-slate-400 tracking-wider">NO EPIC</div>
+                  )}
+                  {otherTickets.map(renderLeaf)}
+                </>
+              )}
             </div>
           )}
         </ScrollArea>

@@ -95,6 +95,10 @@ def _ensure_jira_columns(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE tickets ADD COLUMN jira_issue_type TEXT")
     if "jira_parent_key" not in ticket_cols:
         conn.execute("ALTER TABLE tickets ADD COLUMN jira_parent_key TEXT")
+    if "jira_status" not in ticket_cols:
+        conn.execute("ALTER TABLE tickets ADD COLUMN jira_status TEXT")
+    if "jira_priority" not in ticket_cols:
+        conn.execute("ALTER TABLE tickets ADD COLUMN jira_priority TEXT")
     project_cols = {row[1] for row in conn.execute("PRAGMA table_info(projects)").fetchall()}
     if "jira_jql" not in project_cols:
         conn.execute("ALTER TABLE projects ADD COLUMN jira_jql TEXT")
@@ -133,6 +137,8 @@ def _row_to_ticket(row: sqlite3.Row) -> dict:
         "jira_key": row["jira_key"] if "jira_key" in row.keys() else None,
         "jira_issue_type": row["jira_issue_type"] if "jira_issue_type" in row.keys() else None,
         "jira_parent_key": row["jira_parent_key"] if "jira_parent_key" in row.keys() else None,
+        "jira_status": row["jira_status"] if "jira_status" in row.keys() else None,
+        "jira_priority": row["jira_priority"] if "jira_priority" in row.keys() else None,
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
     }
@@ -284,6 +290,24 @@ def get_ticket(ticket_id: int) -> dict | None:
     return _row_to_ticket(row)
 
 
+def list_children(project_id: int, parent_jira_key: str) -> list[dict]:
+    """Direct child tickets of a Jira parent (Epic → Stories, Story → Sub-tasks).
+
+    Mirrors the web's ``getChildren`` helper: children are tickets whose
+    ``jira_parent_key`` matches *parent_jira_key* within the same project.
+    Ordered by id so a deterministic sequential fallback is possible.
+    """
+    ensure_schema()
+    if not parent_jira_key:
+        return []
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT * FROM tickets WHERE project_id = ? AND jira_parent_key = ? ORDER BY id ASC",
+            (project_id, parent_jira_key),
+        ).fetchall()
+    return [_row_to_ticket(row) for row in rows]
+
+
 def set_ticket_run(ticket_id: int, run_id: str, status: str = "planning") -> dict | None:
     ensure_schema()
     now = _now_iso()
@@ -325,8 +349,15 @@ def delete_ticket(ticket_id: int) -> dict | None:
 def upsert_jira_ticket(project_id: int, jira_key: str, title: str,
                        description: str | None, ticket_type: str,
                        jira_issue_type: str | None = None,
-                       jira_parent_key: str | None = None) -> dict:
-    """Insert or update a Jira-sourced ticket. Upserts by (project_id, jira_key)."""
+                       jira_parent_key: str | None = None,
+                       jira_status: str | None = None,
+                       jira_priority: str | None = None) -> dict:
+    """Insert or update a Jira-sourced ticket. Upserts by (project_id, jira_key).
+
+    ``jira_status`` is the issue's Jira workflow status (e.g. "In Progress") and
+    ``jira_priority`` its priority name — both display-only; the internal pipeline
+    ``status`` column is left untouched so an in-flight run is not clobbered.
+    """
     ensure_schema()
     kind = ticket_type.strip().lower()
     if kind not in TICKET_TYPES:
@@ -339,15 +370,15 @@ def upsert_jira_ticket(project_id: int, jira_key: str, title: str,
         ).fetchone()
         if existing:
             conn.execute(
-                "UPDATE tickets SET title = ?, description = ?, ticket_type = ?, jira_issue_type = ?, jira_parent_key = ?, updated_at = ? WHERE id = ?",
-                (title.strip(), description, kind, jira_issue_type, jira_parent_key, now, existing["id"]),
+                "UPDATE tickets SET title = ?, description = ?, ticket_type = ?, jira_issue_type = ?, jira_parent_key = ?, jira_status = ?, jira_priority = ?, updated_at = ? WHERE id = ?",
+                (title.strip(), description, kind, jira_issue_type, jira_parent_key, jira_status, jira_priority, now, existing["id"]),
             )
             row = conn.execute("SELECT * FROM tickets WHERE id = ?", (existing["id"],)).fetchone()
             conn.commit()
             return _row_to_ticket(row)
         cur = conn.execute(
-            "INSERT INTO tickets (project_id, title, description, ticket_type, status, run_id, source, jira_key, jira_issue_type, jira_parent_key, created_at, updated_at) VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?)",
-            (project_id, title.strip(), description, kind, "pending", "jira", jira_key, jira_issue_type, jira_parent_key, now, now),
+            "INSERT INTO tickets (project_id, title, description, ticket_type, status, run_id, source, jira_key, jira_issue_type, jira_parent_key, jira_status, jira_priority, created_at, updated_at) VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (project_id, title.strip(), description, kind, "pending", "jira", jira_key, jira_issue_type, jira_parent_key, jira_status, jira_priority, now, now),
         )
         row = conn.execute("SELECT * FROM tickets WHERE id = ?", (cur.lastrowid,)).fetchone()
         conn.commit()

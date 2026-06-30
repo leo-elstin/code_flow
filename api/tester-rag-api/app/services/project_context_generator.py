@@ -1,7 +1,7 @@
 import os
 from typing import Any
 
-from app.services.generation import get_generation_client, get_generation_model
+from app.services.generation import acompletion, get_generation_model
 from app.services.project_guide import load_project_guide
 
 _CONTEXT_SYSTEM = """You are a technical writer summarizing a Flutter/Dart project for AI coding agents.
@@ -49,8 +49,7 @@ async def generate_project_context(project_path: str, hints: str = "") -> str:
         user_parts.append(f"User hints:\n{hints.strip()}")
     user_parts.append("Produce project context for coding agents.")
 
-    client = get_generation_client()
-    response = await client.chat.completions.create(
+    response = await acompletion(
         model=get_generation_model(),
         messages=[
             {"role": "system", "content": _CONTEXT_SYSTEM},
