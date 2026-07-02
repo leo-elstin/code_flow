@@ -56,6 +56,12 @@ class Settings:
         "true",
         "yes",
     )
+    # When > 0 and the deterministic gate passed, skip the verifier's LLM review
+    # for modify-only changes whose total diff is at most this many characters.
+    # 0 (default) always runs the LLM review.
+    CODE_AGENT_VERIFIER_SKIP_LLM_TRIVIAL_CHARS: int = int(
+        os.getenv("CODE_AGENT_VERIFIER_SKIP_LLM_TRIVIAL_CHARS", "0")
+    )
     # Epic full-auto mode: default for the per-request auto_approve flag. When
     # true (or when a start-epic request passes auto_approve=true) the epic plan
     # is executed immediately without the human approval gate, and failed child
