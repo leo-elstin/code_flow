@@ -318,3 +318,97 @@ class JiraService:
             linked_issues=linked,
             attachments=image_attachments,
         )
+
+
+# ---------------------------------------------------------------------------
+# Referenced-ticket resolution
+#
+# A ticket's prose often names other Jira issues that carry rules/context the
+# planner needs (e.g. "blocked mixes per OIPO-667") without ever linking them
+# formally. These helpers detect such keys and pull in the referenced issues'
+# descriptions so the planner does not have to stop and ask.
+# ---------------------------------------------------------------------------
+
+# Jira keys: 2+ letter project code, dash, digits. Word-bounded.
+_JIRA_KEY_RE = re.compile(r"\b([A-Z][A-Z0-9]{1,9}-\d+)\b")
+
+# Code-ish tokens that look like Jira keys but are not (avoid pointless fetches).
+_NON_JIRA_PREFIXES = frozenset(
+    {"UTF", "SHA", "ISO", "RFC", "UTC", "MD5", "IPV4", "IPV6", "BASE64", "OAUTH2", "SHA256"}
+)
+
+_REFERENCED_BODY_CAP = 2000
+
+# Reuse one authenticated client across resolutions (constructing JiraService
+# performs a network handshake).
+_ref_service: "JiraService | None" = None
+
+
+def extract_jira_keys(text: str, *, exclude: frozenset[str] | set[str] = frozenset()) -> list[str]:
+    """Return distinct Jira issue keys mentioned in *text*, in first-seen order.
+
+    Skips keys in *exclude* and common non-Jira tokens (UTF-8, SHA-256, …)."""
+    seen: set[str] = set()
+    out: list[str] = []
+    for match in _JIRA_KEY_RE.finditer(text or ""):
+        key = match.group(1)
+        if key in exclude or key in seen:
+            continue
+        if key.split("-", 1)[0] in _NON_JIRA_PREFIXES:
+            continue
+        seen.add(key)
+        out.append(key)
+    return out
+
+
+def _get_ref_service() -> "JiraService":
+    global _ref_service
+    if _ref_service is None:
+        _ref_service = JiraService()
+    return _ref_service
+
+
+def build_referenced_tickets_context(
+    text: str,
+    *,
+    exclude: frozenset[str] | set[str] = frozenset(),
+    max_tickets: int | None = None,
+    body_cap: int = _REFERENCED_BODY_CAP,
+) -> str:
+    """Fetch the bodies of Jira tickets mentioned in *text* and format them for
+    the planner. Returns an empty string when Jira is unconfigured, nothing is
+    referenced, or no reference could be fetched. Never raises: an unreachable
+    or forbidden ticket is logged and skipped so planning proceeds regardless."""
+    if not JiraService.is_configured():
+        return ""
+    keys = extract_jira_keys(text, exclude=exclude)
+    if max_tickets is None:
+        max_tickets = settings.CODE_AGENT_MAX_REFERENCED_TICKETS
+    keys = keys[: max(max_tickets, 0)]
+    if not keys:
+        return ""
+    try:
+        svc = _get_ref_service()
+    except Exception as exc:  # noqa: BLE001 — Jira client init is best-effort
+        logger.warning("Referenced-ticket resolver: Jira client unavailable: %s", exc)
+        return ""
+
+    blocks: list[str] = []
+    for key in keys:
+        try:
+            ticket = svc.get_ticket(key)
+        except Exception as exc:  # noqa: BLE001 — 404 / no access / transport
+            logger.info("Referenced ticket %s not fetched (%s); skipping", key, exc)
+            continue
+        body = (ticket.description or "").strip()
+        if len(body) > body_cap:
+            body = body[:body_cap] + "\n…[truncated]"
+        block = f"### {ticket.key} ({ticket.status}) — {ticket.summary}\n{body}".strip()
+        blocks.append(block)
+
+    if not blocks:
+        return ""
+    return (
+        "Referenced Jira tickets (auto-fetched — use these details in your plan):\n\n"
+        + "\n\n".join(blocks)
+    )

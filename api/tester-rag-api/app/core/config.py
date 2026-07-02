@@ -50,6 +50,15 @@ class Settings:
         "true",
         "yes",
     )
+    # When true, Jira tickets named in a ticket's own text (e.g. a cross-project
+    # rule ticket like OIPO-667) are fetched and their descriptions handed to the
+    # planner, so it can plan without pausing to ask about them.
+    CODE_AGENT_RESOLVE_REFERENCED_TICKETS: bool = os.getenv(
+        "CODE_AGENT_RESOLVE_REFERENCED_TICKETS", "true"
+    ).lower() in ("1", "true", "yes")
+    CODE_AGENT_MAX_REFERENCED_TICKETS: int = int(
+        os.getenv("CODE_AGENT_MAX_REFERENCED_TICKETS", "5")
+    )
     CODE_AGENT_LSP_TIMEOUT: int = int(os.getenv("CODE_AGENT_LSP_TIMEOUT", "30"))
     CODE_AGENT_ANALYZE_BLOCKING: bool = os.getenv("CODE_AGENT_ANALYZE_BLOCKING", "true").lower() in (
         "1",
