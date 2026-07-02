@@ -162,6 +162,7 @@ export interface EpicRun {
   status: string;
   workspace_mode: string;
   integration_branch?: string;
+  auto_approve?: boolean;
   plan?: EpicPlan;
   children: EpicChildRun[];
   error?: string;

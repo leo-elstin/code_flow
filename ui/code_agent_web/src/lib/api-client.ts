@@ -303,10 +303,21 @@ export class CodeAgentApiClient {
 
   // -- Epic-level execution --------------------------------------------------
 
-  static async startEpicRun(ticketId: number): Promise<{ epic_run_id: string; status: string }> {
+  static async startEpicRun(
+    ticketId: number,
+    autoApprove?: boolean
+  ): Promise<{ epic_run_id: string; status: string }> {
     return this._request<{ epic_run_id: string; status: string }>(
       `/api/code-agent/epics/${ticketId}/run`,
-      { method: 'POST' }
+      {
+        method: 'POST',
+        ...(autoApprove === undefined
+          ? {}
+          : {
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ auto_approve: autoApprove }),
+            }),
+      }
     );
   }
 
