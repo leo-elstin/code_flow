@@ -299,6 +299,12 @@ class EpicChildRun(BaseModel):
     status: str = "pending"
 
 
+class StartEpicRunRequest(BaseModel):
+    # None = fall back to the EPIC_AUTO_APPROVE server default.
+    auto_approve: bool | None = None
+    workspace_mode: str = "worktree"
+
+
 class StartEpicRunResponse(BaseModel):
     epic_run_id: str
     status: str
@@ -315,6 +321,7 @@ class EpicRunResponse(BaseModel):
     status: str
     workspace_mode: str = "worktree"
     integration_branch: str | None = None
+    auto_approve: bool = False
     # plan = {levels: [[ticket_id,...],...], edges, reasoning, had_cycle, nodes}
     plan: dict | None = None
     children: list[EpicChildRun] = Field(default_factory=list)

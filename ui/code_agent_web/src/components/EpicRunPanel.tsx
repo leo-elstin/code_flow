@@ -9,7 +9,7 @@ import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { toast } from 'sonner';
 import {
-  Play, GitBranch, Loader2, Check, X, CheckCircle2, AlertTriangle, Layers, ArrowRight, ExternalLink,
+  Play, GitBranch, Loader2, Check, X, CheckCircle2, AlertTriangle, Layers, ArrowRight, ExternalLink, Zap,
 } from 'lucide-react';
 
 interface EpicRunPanelProps {
@@ -63,6 +63,7 @@ function statusBadge(status: string) {
 export default function EpicRunPanel({ ticket, tickets, projectId, jiraBaseUrl, onSelectChild }: EpicRunPanelProps) {
   const [epicRun, setEpicRun] = useState<EpicRun | null>(null);
   const [isBusy, setIsBusy] = useState(false);
+  const [autoMode, setAutoMode] = useState(false);
   const pollRef = useRef<NodeJS.Timeout | null>(null);
 
   const childTickets = getChildren(tickets, ticket);
@@ -105,9 +106,9 @@ export default function EpicRunPanel({ ticket, tickets, projectId, jiraBaseUrl, 
   const handleStart = async () => {
     setIsBusy(true);
     try {
-      const { epic_run_id } = await CodeAgentApiClient.startEpicRun(ticket.id);
+      const { epic_run_id } = await CodeAgentApiClient.startEpicRun(ticket.id, autoMode || undefined);
       setEpicRun(await CodeAgentApiClient.getEpicRun(epic_run_id));
-      toast.success('Epic planning started');
+      toast.success(autoMode ? 'Epic started in full-auto mode' : 'Epic planning started');
     } catch (err: any) {
       toast.error(err.message || 'Failed to start epic run');
     } finally {
@@ -200,6 +201,11 @@ export default function EpicRunPanel({ ticket, tickets, projectId, jiraBaseUrl, 
           )}
           <TicketTypeBadge ticket={ticket} />
           {status && <span className="ml-1">{statusBadge(status)}</span>}
+          {epicRun?.auto_approve && (
+            <Badge variant="outline" className="text-[10px] px-2 py-0.5 font-semibold tracking-wide rounded-md bg-violet-500/10 text-violet-600 border-violet-500/20">
+              <Zap size={10} className="mr-1" /> Auto
+            </Badge>
+          )}
           <div className="flex-1" />
           {jiraHref && (
             <a
@@ -376,6 +382,16 @@ export default function EpicRunPanel({ ticket, tickets, projectId, jiraBaseUrl, 
           </div>
         ) : canExecute && total > 0 ? (
           <>
+            <label className="flex items-center gap-2 mb-3 text-xs text-slate-600 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={autoMode}
+                onChange={(e) => setAutoMode(e.target.checked)}
+                className="rounded border-slate-300"
+              />
+              <Zap size={12} className="text-violet-500 flex-shrink-0" />
+              Full auto — skip plan approval, auto-retry failed stories
+            </label>
             <button
               onClick={handleStart}
               disabled={isBusy}

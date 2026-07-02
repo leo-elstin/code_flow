@@ -22,6 +22,7 @@ from app.api.code_agent.schemas import (
     RunSummaryResponse,
     StartRunRequest,
     StartRunResponse,
+    StartEpicRunRequest,
     StartEpicRunResponse,
     ApproveEpicRunRequest,
     EpicChildRun,
@@ -434,6 +435,7 @@ def _to_epic_response(state: dict) -> EpicRunResponse:
         status=state.get("status", "planning"),
         workspace_mode=state.get("workspace_mode") or "worktree",
         integration_branch=state.get("integration_branch"),
+        auto_approve=bool(state.get("auto_approve")),
         plan=plan or None,
         children=children,
         error=state.get("error"),
@@ -443,13 +445,14 @@ def _to_epic_response(state: dict) -> EpicRunResponse:
 
 
 @router.post("/epics/{ticket_id}/run", response_model=StartEpicRunResponse, status_code=202)
-async def start_epic_run(ticket_id: int):
+async def start_epic_run(ticket_id: int, body: StartEpicRunRequest | None = None):
     """Plan and queue execution of every child story under an epic ticket."""
-    logger.info("POST /epics/%s/run", ticket_id)
+    auto_approve = body.auto_approve if body else None
+    logger.info("POST /epics/%s/run auto_approve=%s", ticket_id, auto_approve)
     if not get_ticket(ticket_id):
         raise HTTPException(status_code=404, detail="Ticket not found")
     try:
-        state = await epic_runner.start_epic_run(ticket_id)
+        state = await epic_runner.start_epic_run(ticket_id, auto_approve=auto_approve)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
     return StartEpicRunResponse(epic_run_id=state["epic_run_id"], status=state["status"])
