@@ -324,6 +324,46 @@ def compare_to_plan(
     }
 
 
+_MAX_DIFF_FILES = 20
+_MAX_DIFF_CHARS = 6_000
+_FAILED_OUTPUT_TAIL = 1_500
+
+
+def _build_llm_payload(
+    plan: dict[str, Any],
+    acceptance_criteria: list[str],
+    file_changes: list[dict[str, Any]],
+    diffs: list[dict[str, Any]],
+    gate: dict[str, Any],
+) -> dict[str, Any]:
+    """Trim the LLM-review payload: subprocess stdout/stderr adds no review
+    signal once the gate passed (error_lines already carry analyzer findings),
+    and only failed test output is worth showing. Diffs are capped per file."""
+    gate_summary = dict(gate)
+    for key in ("pub_get", "build_runner", "test_results"):
+        section = gate_summary.get(key)
+        if not isinstance(section, dict):
+            continue
+        section = dict(section)
+        keep_tail = key == "test_results" and not section.get("passed", True)
+        for stream in ("stdout", "stderr"):
+            value = section.get(stream)
+            if not value:
+                continue
+            section[stream] = value[-_FAILED_OUTPUT_TAIL:] if keep_tail else ""
+        gate_summary[key] = section
+    return {
+        "plan": plan,
+        "acceptance_criteria": acceptance_criteria,
+        "file_changes": file_changes,
+        "diffs": [
+            {"path": d.get("path"), "diff": (d.get("diff") or "")[:_MAX_DIFF_CHARS]}
+            for d in diffs[:_MAX_DIFF_FILES]
+        ],
+        "deterministic_gate": gate_summary,
+    }
+
+
 async def run_verifier(
     *,
     plan: dict[str, Any],
@@ -374,6 +414,28 @@ async def run_verifier(
                 "messages": [{"role": "verifier", "content": "Deterministic gates failed."}],
             }
 
+        threshold = settings.CODE_AGENT_VERIFIER_SKIP_LLM_TRIVIAL_CHARS
+        if (
+            threshold > 0
+            and not (plan.get("files_to_create") or [])
+            and sum(len(d.get("diff") or "") for d in diffs) <= threshold
+        ):
+            # Trivial modify-only change with all deterministic checks green —
+            # the LLM review adds little; opt-in fast path.
+            logger.info("Verifier passed (gate only; LLM review skipped, trivial diff)")
+            report = {
+                "passed": True,
+                "issues": [],
+                "required_fixes": [],
+                "deterministic_gate": gate,
+                "llm_review": "skipped_trivial",
+            }
+            return {
+                "verifier_report": report,
+                "diffs": diffs,
+                "messages": [{"role": "verifier", "content": "Verification passed."}],
+            }
+
         llm_report, _usage = await chat_completion_json(
             messages=[
                 {
@@ -399,13 +461,9 @@ async def run_verifier(
                 {
                     "role": "user",
                     "content": json.dumps(
-                        {
-                            "plan": plan,
-                            "acceptance_criteria": acceptance_criteria,
-                            "file_changes": file_changes,
-                            "diffs": diffs[:20],
-                            "deterministic_gate": gate,
-                        },
+                        _build_llm_payload(
+                            plan, acceptance_criteria, file_changes, diffs, gate
+                        ),
                         indent=2,
                     )[:120000],
                 },
