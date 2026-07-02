@@ -98,6 +98,14 @@ class Settings:
         "yes",
     )
     EPIC_CHILD_AUTO_RETRIES: int = int(os.getenv("EPIC_CHILD_AUTO_RETRIES", "1"))
+    # Default for single (non-epic) ticket runs: when true, a run approves its own
+    # plan and proceeds to development without the human "Review & Approve" gate.
+    # Overridable per request via the start-run auto_approve flag.
+    CODE_AGENT_AUTO_APPROVE: bool = os.getenv("CODE_AGENT_AUTO_APPROVE", "false").lower() in (
+        "1",
+        "true",
+        "yes",
+    )
     DART_BIN: str = os.getenv("DART_BIN", "dart")
     FLUTTER_BIN: str = os.getenv("FLUTTER_BIN", "flutter")
     CODE_AGENT_CORS_ORIGINS: str = os.getenv("CODE_AGENT_CORS_ORIGINS", "*")

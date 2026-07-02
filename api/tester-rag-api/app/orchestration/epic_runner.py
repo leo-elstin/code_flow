@@ -520,8 +520,10 @@ class EpicAgentRunner:
             epic_run_store.set_child_run(epic_run_id, ticket_id, status="failed")
             return "failed"
 
+        # The epic approves its children itself (below); disable the single-run
+        # auto-approve so the two paths can't race even when the global default is on.
         run_id = await runner.start_run(
-            _child_request(ticket), project_path, ticket_id=ticket_id
+            _child_request(ticket), project_path, ticket_id=ticket_id, auto_approve=False
         )
         epic_run_store.set_child_run(
             epic_run_id, ticket_id, run_id=run_id, status="planning",

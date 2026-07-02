@@ -130,8 +130,11 @@ async def start_run(body: StartRunRequest):
         if not project or project["path"] != os.path.abspath(body.project_path):
             raise HTTPException(status_code=400, detail="Ticket does not belong to the given project")
     try:
-        run_id = await runner.start_run(body.request, body.project_path, ticket_id=body.ticket_id)
-        logger.info("POST /run success run_id=%s", run_id)
+        run_id = await runner.start_run(
+            body.request, body.project_path, ticket_id=body.ticket_id,
+            auto_approve=body.auto_approve,
+        )
+        logger.info("POST /run success run_id=%s auto_approve=%s", run_id, body.auto_approve)
         return StartRunResponse(run_id=run_id, status="planning")
     except Exception:
         logger.exception("POST /run error project_path=%s", body.project_path)

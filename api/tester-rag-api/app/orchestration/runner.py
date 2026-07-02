@@ -332,7 +332,33 @@ class CodeAgentRunner:
         existing = (linked_issues_context or "").strip()
         return f"{existing}\n\n{referenced}".strip() if existing else referenced
 
-    async def start_run(self, user_request: str, project_path: str, ticket_id: int | None = None) -> str:
+    async def _auto_approve_when_ready(self, run_id: str) -> None:
+        """Approve a single run's plan automatically once planning finishes.
+
+        Waits for the planning task to reach the interrupt, then approves if the
+        plan is ready. No-op if the planner asked clarification questions (the
+        user must answer those) or the run already moved on."""
+        try:
+            await self.wait_for_task(run_id, timeout=3600)
+        except Exception:  # noqa: BLE001
+            pass
+        state = await self.get_state(run_id)
+        if (state or {}).get("status") != "awaiting_approval":
+            return
+        try:
+            await self.approve_run(run_id, workspace_mode="worktree")
+            logger.info("Auto-approved run %s (plan ready)", run_id)
+        except Exception:  # noqa: BLE001
+            logger.warning("Auto-approve failed for run %s", run_id, exc_info=True)
+
+    async def start_run(
+        self,
+        user_request: str,
+        project_path: str,
+        ticket_id: int | None = None,
+        *,
+        auto_approve: bool | None = None,
+    ) -> str:
         run_id = str(uuid.uuid4())
         logger.info("Starting run run_id=%s project_path=%s", run_id, project_path)
         state = initial_state(run_id, user_request, project_path)
@@ -377,6 +403,10 @@ class CodeAgentRunner:
         task = asyncio.create_task(self._run_graph(run_id, _invoke))
         self._tasks[run_id] = task
         logger.info("Run started run_id=%s status=planning", run_id)
+
+        auto = settings.CODE_AGENT_AUTO_APPROVE if auto_approve is None else bool(auto_approve)
+        if auto:
+            asyncio.create_task(self._auto_approve_when_ready(run_id))
         return run_id
 
     async def get_state(self, run_id: str) -> FeatureRunState | None:
