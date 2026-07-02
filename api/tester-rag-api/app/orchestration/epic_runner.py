@@ -74,10 +74,26 @@ def _child_request(ticket: dict) -> str:
 # Git integration-branch helpers (run via asyncio.to_thread)
 # ---------------------------------------------------------------------------
 
+def _epic_integration_branch(epic_run_id: str, epic_jira_key: str | None) -> str:
+    """Human-friendly integration branch per epic.
+
+    A Jira-sourced epic lands all its stories on ``feature/<JIRA-KEY>``
+    (e.g. ``feature/MMA-3480``) in the real repo, so the changes live on a
+    named branch the user can check out. Falls back to a run-scoped name for
+    epics with no Jira key."""
+    if epic_jira_key and epic_jira_key.strip():
+        return f"feature/{epic_jira_key.strip().replace(' ', '-')}"
+    return f"agent/epic-{epic_run_id}"
+
+
 def _create_integration_worktree(
     project_path: str, epic_run_id: str, integration_branch: str
 ) -> str:
-    """Create ``agent/epic-<id>`` in its own worktree, branched from HEAD."""
+    """Check out the epic's integration branch in its own worktree.
+
+    Creates ``integration_branch`` from HEAD when it does not exist; when it
+    already exists (a re-run of the same epic reuses ``feature/<KEY>``), the
+    worktree is attached to the existing branch so its history accumulates."""
     head = subprocess.run(
         ["git", "-C", project_path, "rev-parse", "HEAD"],
         capture_output=True, text=True, check=True,
@@ -86,8 +102,17 @@ def _create_integration_worktree(
     os.makedirs(os.path.dirname(wt_path), exist_ok=True)
     if os.path.exists(wt_path):
         remove_worktree(project_path, wt_path)
+    branch_exists = subprocess.run(
+        ["git", "-C", project_path, "rev-parse", "--verify", f"refs/heads/{integration_branch}"],
+        capture_output=True, text=True, check=False,
+    ).returncode == 0
+    add_args = (
+        ["worktree", "add", wt_path, integration_branch]
+        if branch_exists
+        else ["worktree", "add", "-b", integration_branch, wt_path, head]
+    )
     proc = subprocess.run(
-        ["git", "-C", project_path, "worktree", "add", "-b", integration_branch, wt_path, head],
+        ["git", "-C", project_path, *add_args],
         capture_output=True, text=True, check=False,
     )
     if proc.returncode != 0:
@@ -386,7 +411,9 @@ class EpicAgentRunner:
             # On resume, re-attach to the branch the prior run already built so
             # completed children's merges are preserved.
             existing_branch = state.get("integration_branch")
-            integration_branch = existing_branch or f"agent/epic-{epic_run_id}"
+            integration_branch = existing_branch or _epic_integration_branch(
+                epic_run_id, state.get("epic_jira_key")
+            )
             integration_wt: str | None = None
             try:
                 if resume and existing_branch:

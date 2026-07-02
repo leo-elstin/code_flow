@@ -388,3 +388,26 @@ def test_child_clarification_fails_fast(monkeypatch):
         assert final["status"] == "failed"
         assert final["child_runs"]["2"]["status"] == "failed"
         assert 3 not in fake.started
+
+
+def test_epic_integration_branch_naming():
+    # Jira-sourced epic -> feature/<KEY>
+    assert er_mod._epic_integration_branch("run-1", "MMA-3480") == "feature/MMA-3480"
+    # whitespace tolerated
+    assert er_mod._epic_integration_branch("run-1", " MMA-3480 ") == "feature/MMA-3480"
+    # no jira key -> run-scoped fallback
+    assert er_mod._epic_integration_branch("run-xyz", None) == "agent/epic-run-xyz"
+    assert er_mod._epic_integration_branch("run-xyz", "") == "agent/epic-run-xyz"
+
+
+def test_epic_run_lands_on_feature_branch(monkeypatch):
+    with tempfile.TemporaryDirectory() as tmp:
+        fake = FakeRunner(outcomes={1: "completed", 2: "completed", 3: "completed"})
+        _patch_common(monkeypatch, tmp, fake)
+        er = er_mod.EpicAgentRunner()
+
+        final = asyncio.run(_drive(er, 10))
+
+        assert final["status"] == "completed"
+        # epic jira_key is E-10 (see _patch_common) -> feature/E-10
+        assert final["integration_branch"] == "feature/E-10"
