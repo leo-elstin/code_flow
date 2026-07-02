@@ -178,10 +178,24 @@ class EpicAgentRunner:
 
     # -- public API ----------------------------------------------------------
 
+    def _begin_execution(self, epic_run_id: str, *, resume: bool = False) -> dict | None:
+        """Shared transition into the execution phase (approve / auto / resume)."""
+        updated = epic_run_store.update_epic_run(epic_run_id, status="developing", error=None)
+        task = asyncio.create_task(self._run_execution_phase(epic_run_id, resume=resume))
+        self._tasks[epic_run_id] = task
+        return updated
+
     async def start_epic_run(
-        self, epic_ticket_id: int, *, workspace_mode: str = "worktree"
+        self,
+        epic_ticket_id: int,
+        *,
+        workspace_mode: str = "worktree",
+        auto_approve: bool | None = None,
     ) -> dict:
-        """Create an epic run and plan it (status planning → awaiting_approval)."""
+        """Create an epic run and plan it (status planning → awaiting_approval).
+
+        With ``auto_approve`` (per-request, defaulting to ``EPIC_AUTO_APPROVE``)
+        the plan is executed immediately after planning — no human gate."""
         self._reap_tasks()
         epic = get_ticket(epic_ticket_id)
         if not epic:
@@ -190,6 +204,7 @@ class EpicAgentRunner:
         if not project:
             raise KeyError("project_not_found")
 
+        auto = settings.EPIC_AUTO_APPROVE if auto_approve is None else bool(auto_approve)
         children = (
             list_children(epic["project_id"], epic["jira_key"])
             if epic.get("jira_key")
@@ -203,6 +218,7 @@ class EpicAgentRunner:
             project_path=project["path"],
             epic_jira_key=epic.get("jira_key"),
             workspace_mode="worktree" if workspace_mode != "in_place" else workspace_mode,
+            auto_approve=auto,
         )
         for child in children:
             epic_run_store.set_child_run(
@@ -210,7 +226,7 @@ class EpicAgentRunner:
             )
 
         task = asyncio.create_task(
-            self._run_planning_phase(epic_run_id, epic, children)
+            self._run_planning_phase(epic_run_id, epic, children, auto_approve=auto)
         )
         self._tasks[epic_run_id] = task
         return epic_run_store.get_epic_run(epic_run_id)
@@ -224,12 +240,8 @@ class EpicAgentRunner:
         if state["status"] != "awaiting_approval":
             return state
         mode = "worktree" if workspace_mode == "in_place" else workspace_mode
-        updated = epic_run_store.update_epic_run(
-            epic_run_id, status="developing", workspace_mode=mode
-        )
-        task = asyncio.create_task(self._run_execution_phase(epic_run_id))
-        self._tasks[epic_run_id] = task
-        return updated
+        epic_run_store.update_epic_run(epic_run_id, workspace_mode=mode)
+        return self._begin_execution(epic_run_id)
 
     async def reject_epic_run(self, epic_run_id: str) -> dict | None:
         state = epic_run_store.get_epic_run(epic_run_id)
@@ -253,10 +265,7 @@ class EpicAgentRunner:
         if not ((state.get("plan") or {}).get("levels")):
             raise ValueError("Epic has no execution plan to resume; start a new run")
         self._reap_tasks()
-        updated = epic_run_store.update_epic_run(epic_run_id, status="developing", error=None)
-        task = asyncio.create_task(self._run_execution_phase(epic_run_id, resume=True))
-        self._tasks[epic_run_id] = task
-        return updated
+        return self._begin_execution(epic_run_id, resume=True)
 
     async def get_state(self, epic_run_id: str) -> dict | None:
         state = epic_run_store.get_epic_run(epic_run_id)
@@ -312,10 +321,23 @@ class EpicAgentRunner:
 
     # -- phases --------------------------------------------------------------
 
-    async def _run_planning_phase(self, epic_run_id: str, epic: dict, children: list[dict]) -> None:
+    async def _run_planning_phase(
+        self, epic_run_id: str, epic: dict, children: list[dict], *, auto_approve: bool = False
+    ) -> None:
         try:
             plan = await run_epic_planner(epic, children, run_id=epic_run_id)
-            epic_run_store.update_epic_run(epic_run_id, plan=plan, status="awaiting_approval")
+            if auto_approve:
+                # Full-auto mode: never persist awaiting_approval, so there is no
+                # window where a restart strands the run at the human gate.
+                epic_run_store.update_epic_run(epic_run_id, plan=plan)
+                append_activity(
+                    epic_run_id, type="status", phase="planner",
+                    title="Auto-approved epic plan (full-auto mode)",
+                )
+                logger.info("Epic %s plan auto-approved (full-auto mode)", epic_run_id)
+                self._begin_execution(epic_run_id)
+            else:
+                epic_run_store.update_epic_run(epic_run_id, plan=plan, status="awaiting_approval")
         except Exception as exc:  # noqa: BLE001
             logger.exception("Epic planning failed epic_run_id=%s", epic_run_id)
             epic_run_store.update_epic_run(epic_run_id, status="failed", error=str(exc))
@@ -430,8 +452,21 @@ class EpicAgentRunner:
 
         # Wait for planning to finish, then auto-approve (epic approval covers
         # the whole batch — child plans don't need individual approval).
-        state = await self._wait_for(run_id, {"awaiting_approval"} | _TERMINAL)
+        state = await self._wait_for(
+            run_id, {"awaiting_approval", "awaiting_clarification"} | _TERMINAL
+        )
         status = state.get("status") if state else None
+        if status == "awaiting_clarification":
+            # No human in the loop to answer planner questions — fail fast
+            # instead of burning the full child timeout.
+            msg = (
+                f"Child run for ticket {ticket_id} asked clarification questions; "
+                "epic mode cannot answer them."
+            )
+            append_activity(epic_run_id, type="status", phase="planner",
+                            title="Child needs clarification", detail=msg)
+            epic_run_store.set_child_run(epic_run_id, ticket_id, status="failed")
+            return "failed"
         if status == "awaiting_approval":
             await runner.approve_run(run_id, workspace_mode="worktree", base_ref=base_ref)
             state = await self._wait_for(run_id, _TERMINAL)
