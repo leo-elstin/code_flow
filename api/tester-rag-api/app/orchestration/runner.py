@@ -301,6 +301,37 @@ class CodeAgentRunner:
             await self.get_state(run_id)
             self._reap_tasks(exclude=run_id)
 
+    async def _enrich_referenced_tickets(
+        self,
+        run_id: str,
+        *,
+        own_key: str | None,
+        raw_description: str,
+        acceptance_criteria: list[str],
+        linked_issues_context: str | None,
+    ) -> str | None:
+        """Append auto-fetched bodies of Jira tickets named in the ticket text to
+        the linked-issues context. Runs the (blocking) Jira fetch off the event
+        loop and never fails the run — on any error the original context stands."""
+        try:
+            from app.services.jira_service import build_referenced_tickets_context
+
+            ref_text = "\n".join([raw_description, *acceptance_criteria])
+            referenced = await asyncio.to_thread(
+                build_referenced_tickets_context,
+                ref_text,
+                exclude={own_key} if own_key else set(),
+            )
+        except Exception as exc:  # noqa: BLE001 — enrichment is best-effort
+            logger.warning("Referenced-ticket enrichment failed for run %s: %s", run_id, exc)
+            return linked_issues_context
+
+        if not referenced:
+            return linked_issues_context
+        logger.info("Run %s enriched with referenced Jira ticket(s)", run_id)
+        existing = (linked_issues_context or "").strip()
+        return f"{existing}\n\n{referenced}".strip() if existing else referenced
+
     async def start_run(self, user_request: str, project_path: str, ticket_id: int | None = None) -> str:
         run_id = str(uuid.uuid4())
         logger.info("Starting run run_id=%s project_path=%s", run_id, project_path)
@@ -318,6 +349,17 @@ class CodeAgentRunner:
                     state["attachment_paths"] = jira_meta.get("attachment_paths", [])
                     state["linked_issues_context"] = jira_meta.get("linked_issues_context")
                     state["acceptance_criteria_hint"] = jira_meta.get("acceptance_criteria", [])
+                    # Pull in the bodies of any Jira tickets named in this
+                    # ticket's own text (rules often live in a referenced ticket
+                    # the planner can't otherwise see), so it need not ask.
+                    if settings.CODE_AGENT_RESOLVE_REFERENCED_TICKETS:
+                        state["linked_issues_context"] = await self._enrich_referenced_tickets(
+                            run_id,
+                            own_key=ticket_data.get("jira_key"),
+                            raw_description=jira_meta.get("raw_description") or "",
+                            acceptance_criteria=jira_meta.get("acceptance_criteria") or [],
+                            linked_issues_context=state.get("linked_issues_context"),
+                        )
                 except (ValueError, TypeError):
                     pass  # description is plain text, not Jira structured JSON
 
