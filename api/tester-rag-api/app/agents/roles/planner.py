@@ -3,9 +3,15 @@ import json
 from pathlib import Path
 from typing import Any
 
+from app.agents.roles.explorer import run_explorer
+from app.core.config import settings
+from app.core.logging_config import get_logger
 from app.services.feature_discovery import discover_context
 from app.services.generation import chat_completion_json
 from app.services.run_activity import append_activity
+from app.tools.grep import read_file as _read_file
+
+logger = get_logger("planner")
 
 
 PLANNER_SYSTEM = """You are a senior Flutter architect planning a feature implementation.
@@ -126,6 +132,42 @@ async def run_planner(
         "files": context_bundle.get("files", [])[:30],
         "file_summaries": context_bundle.get("file_summaries", [])[:15],
     }
+
+    # Agentic exploration: drive a read-only tool loop to locate the concrete
+    # files this ticket needs, then read them into the discovery context so the
+    # planner can produce a file-accurate plan instead of asking "which files?".
+    explorer_findings: dict[str, Any] = {}
+    if settings.CODE_AGENT_AGENTIC_DISCOVERY:
+        try:
+            explorer_findings = await run_explorer(
+                user_request, project_path, run_id=run_id,
+                seed_terms=context_bundle.get("search_terms"),
+                seed_files=context_bundle.get("files"),
+            )
+        except Exception:  # noqa: BLE001 — fall back to plain discovery
+            logger.warning("Agentic exploration failed; using plain discovery", exc_info=True)
+    relevant_files = [
+        rf for rf in (explorer_findings.get("relevant_files") or []) if isinstance(rf, dict)
+    ]
+    if relevant_files:
+        known = {fs.get("path") for fs in context_payload["file_summaries"]}
+        extra: list[dict[str, Any]] = []
+        for rf in relevant_files[: settings.CODE_AGENT_EXPLORER_MAX_FILES]:
+            rel = rf.get("path")
+            if not rel or rel in known:
+                continue
+            try:
+                content = _read_file(project_path, rel, max_chars=6000)
+            except Exception:  # noqa: BLE001
+                continue
+            extra.append({"path": rel, "preview": content[:1500], "lines": content.count("\n") + 1})
+            known.add(rel)
+        # Explorer files are the highest-signal — put them first, then re-cap.
+        context_payload["file_summaries"] = (extra + context_payload["file_summaries"])[:25]
+        context_payload["files"] = sorted(
+            {*context_payload.get("files", []), *[e["path"] for e in extra]}
+        )
+
     manifest_summaries = context_bundle.get("manifest_summaries", [])
     if manifest_summaries:
         context_payload["manifest_summaries"] = manifest_summaries
@@ -155,6 +197,16 @@ async def run_planner(
         text_content += "Jira acceptance criteria (use as starting point):\n"
         text_content += "\n".join(f"- {ac}" for ac in acceptance_criteria_hint)
         text_content += "\n\n"
+    if relevant_files:
+        text_content += (
+            "=== AGENTIC EXPLORATION FINDINGS (files located by reading the codebase — authoritative) ===\n"
+            "These files were found by actually searching and reading the repo. Use them to populate "
+            "files_to_create / files_to_modify with concrete paths. Do NOT ask a clarification question "
+            "about which files to target or which implementation surface to use when these findings "
+            "identify them — proceed with the plan.\n"
+            + json.dumps(explorer_findings, indent=2)
+            + "\n=== END EXPLORATION FINDINGS ===\n\n"
+        )
     text_content += f"Discovery context:\n{context_text}\n\n"
     if clarification_answers:
         text_content += "Clarification answers from the developer (incorporate these into the plan, do NOT emit questions):\n"
