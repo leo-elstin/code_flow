@@ -115,9 +115,14 @@ async def run_explorer(
                 args = json.loads(tc.function.arguments)
             except json.JSONDecodeError:
                 args = {}
-            result = (
-                await asyncio.to_thread(fn, **args) if fn else f"Unknown tool: {tc.function.name}"
-            )
+            try:
+                result = (
+                    await asyncio.to_thread(fn, **args)
+                    if fn
+                    else f"Unknown tool: {tc.function.name}"
+                )
+            except Exception as exc:  # noqa: BLE001 — a bad tool call must not kill the loop
+                result = f"Tool {tc.function.name} error: {exc}"
             if run_id:
                 append_activity(
                     run_id, type="tool", phase="planner",
@@ -126,6 +131,22 @@ async def run_explorer(
                     meta={"tool": tc.function.name},
                 )
             messages.append({"role": "tool", "tool_call_id": tc.id, "content": str(result)})
+
+    if not findings:
+        # The model explored to the step budget without wrapping up. Force a final
+        # answer from what it has already read — no more tools.
+        messages.append({
+            "role": "user",
+            "content": (
+                "Stop exploring now. Based only on the files you have already read, respond "
+                "with the findings JSON described earlier — no more tool calls."
+            ),
+        })
+        try:
+            response = await acompletion(model=settings.OPENAI_CHAT_MODEL, messages=messages)
+            findings = _parse_json(response.choices[0].message.content or "")
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Explorer finalization failed run_id=%s: %s", run_id, exc)
 
     files = findings.get("relevant_files") or []
     if run_id:

@@ -62,19 +62,21 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
 def make_explore_tools(project_path: str) -> tuple[dict[str, Callable[..., str]], list[dict[str, Any]]]:
     """Return (functions, schemas) for read-only exploration of *project_path*."""
 
-    def search_codebase(query: str, max_results: int = _SEARCH_CAP) -> str:
+    # Each tool absorbs unexpected kwargs (**_) — models often pass extras like
+    # start_line/end_line/max_results, and an unknown kwarg must not crash the loop.
+    def search_codebase(query: str, max_results: int = _SEARCH_CAP, **_: Any) -> str:
         try:
-            results = grep_codebase(project_path, query, max_results=max_results)
+            results = grep_codebase(project_path, query, max_results=int(max_results or _SEARCH_CAP))
             return json.dumps(
                 [
                     {"file": m.file_path, "line": m.line_number, "text": m.line_text[:200]}
-                    for m in results[:max_results]
+                    for m in results[:_SEARCH_CAP]
                 ]
             )
         except Exception as exc:  # noqa: BLE001
             return f"Error searching for {query!r}: {exc}"
 
-    def read_file(path: str) -> str:
+    def read_file(path: str, **_: Any) -> str:
         try:
             resolve_read_path(project_path, path)  # traversal guard
             return _grep_read_file(project_path, path, max_chars=_READ_CAP)
@@ -83,9 +85,9 @@ def make_explore_tools(project_path: str) -> tuple[dict[str, Callable[..., str]]
         except Exception as exc:  # noqa: BLE001
             return f"Error reading {path}: {exc}"
 
-    def list_dir(directory: str = ".") -> str:
+    def list_dir(directory: str = ".", **_: Any) -> str:
         try:
-            abs_dir = resolve_read_path(project_path, directory)
+            abs_dir = resolve_read_path(project_path, directory or ".")
             if not os.path.isdir(abs_dir):
                 return f"Not a directory: {directory}"
             entries = []
