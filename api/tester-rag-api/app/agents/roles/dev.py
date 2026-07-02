@@ -26,36 +26,6 @@ You work iteratively by calling tools. Analyze your progress after each tool res
 When the implementation is complete and all files compile cleanly, respond with a plain-text summary of everything
 you created and modified — do not call any more tools.
 
-Available tools:
-
-- read_file_tool: Read the contents of a file.
-  args: path (str)
-
-- write_file_tool: Create a NEW file. Fails if the file already exists — use edit_file_tool to change existing files.
-  Only pass overwrite=True if the file is corrupted beyond repair.
-  args: path (str), content (str), overwrite (bool, default False)
-
-- edit_file_tool: Surgically replace an exact block of code in an existing file.
-  args: path (str), target_content (str), replacement_content (str), allow_multiple (bool, default False)
-
-- roll_back_file_tool: Discard any local uncommitted edits to a specific file.
-  args: path (str)
-
-- list_files_tool: List contents of a directory to understand structure.
-  args: directory (str, default "lib")
-
-- search_codebase_tool: Search for strings or patterns in the codebase.
-  args: query (str)
-
-- lookup_sdk_symbol_tool: Look up the exact signature and docstring of a Flutter/Dart SDK API (e.g., Color.withValues).
-  args: query (str)
-
-- analyze_changed_files_tool: Run flutter analyze scoped to ONLY your planned files. This is how you verify your code compiles.
-  args: (none)
-
-- run_command_tool: Run a whitelisted command (e.g. "dart run build_runner build"). Do not use for analyze.
-  args: command (str)
-
 Rules:
 - Avoid overwriting entire files using "write_file" for small changes. Use "edit_file" instead to perform precise modifications.
 - HOWEVER, if a file becomes severely corrupted (e.g., edit_file keeps failing because the code is duplicated or mangled), you SHOULD use "write_file" to rewrite the entire file with the correct content.
@@ -106,8 +76,8 @@ def _format_skills_block(skills: list[dict[str, str]] | None) -> str:
 
 _RUN_COMMAND_STDOUT_TAIL = 2000
 _RUN_COMMAND_STDERR_TAIL = 1000
-_FIX_MODE_FILE_CAP = 12_000
-_FIX_MODE_MAX_FILES = 6
+_FIX_MODE_FILE_CAP = 8_000
+_FIX_MODE_MAX_FILES = 4
 
 
 def _norm_rel(path: str) -> str:
@@ -193,10 +163,21 @@ def _build_iteration_brief(
         for rel in sorted(allowed_paths)
         if os.path.isfile(os.path.join(worktree_path, rel))
     ]
-    if existing:
+    # Only inject files the feedback actually references — the agent can
+    # read_file_tool anything else on demand. Fall back to the first few
+    # planned files when nothing matches (never provide zero context).
+    feedback_text = "\n".join([*required_fixes, *analyze_errors]).lower()
+    referenced = [
+        rel
+        for rel in existing
+        if rel.lower() in feedback_text
+        or os.path.basename(rel).lower() in feedback_text
+    ]
+    to_inject = (referenced or existing)[:_FIX_MODE_MAX_FILES]
+    if to_inject:
         lines.append("")
         lines.append("Current contents of your planned files:")
-        for rel in existing[:_FIX_MODE_MAX_FILES]:
+        for rel in to_inject:
             try:
                 content = read_file(worktree_path, rel)
             except Exception:
@@ -204,6 +185,11 @@ def _build_iteration_brief(
             if len(content) > _FIX_MODE_FILE_CAP:
                 content = content[:_FIX_MODE_FILE_CAP] + "\n...[file truncated]"
             lines.append(f"\n### {rel}\n```dart\n{content}\n```")
+        skipped = len(existing) - len(to_inject)
+        if skipped > 0:
+            lines.append(
+                f"\n({skipped} other planned file(s) exist; use read_file_tool if needed)"
+            )
 
     lines.append("")
     lines.append(

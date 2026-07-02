@@ -174,20 +174,6 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
     {
         "type": "function",
         "function": {
-            "name": "list_files_tool",
-            "description": "List the contents of a directory to understand project structure.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "directory": {"type": "string", "default": "lib"},
-                },
-                "required": [],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
             "name": "search_codebase_tool",
             "description": "Search for strings or patterns across the codebase. Returns up to 15 matches.",
             "parameters": {
@@ -330,12 +316,6 @@ def make_dev_tools(
         except Exception as exc:
             return f"Error rolling back {path}: {exc}"
 
-    def list_files_tool(directory: str = "lib") -> str:
-        abs_dir = os.path.join(worktree_path, directory)
-        if os.path.exists(abs_dir):
-            return json.dumps(os.listdir(abs_dir))
-        return f"Directory not found: {directory}"
-
     def search_codebase_tool(query: str) -> str:
         try:
             results = grep_codebase(worktree_path, query)
@@ -378,7 +358,6 @@ def make_dev_tools(
         "write_file_tool": write_file_tool,
         "edit_file_tool": edit_file_tool,
         "roll_back_file_tool": roll_back_file_tool,
-        "list_files_tool": list_files_tool,
         "search_codebase_tool": search_codebase_tool,
         "lookup_sdk_symbol_tool": lookup_sdk_symbol_tool,
         "analyze_changed_files_tool": analyze_changed_files_tool,
