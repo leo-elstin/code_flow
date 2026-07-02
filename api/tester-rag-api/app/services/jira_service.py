@@ -58,6 +58,8 @@ class JiraService:
         self._client = JIRA(
             server=settings.JIRA_BASE_URL,
             basic_auth=(settings.JIRA_USER_EMAIL, settings.JIRA_API_TOKEN),
+            timeout=settings.CODE_AGENT_JIRA_TIMEOUT,
+            max_retries=1,
         )
         logger.info("Jira client initialised for %s", settings.JIRA_BASE_URL)
 

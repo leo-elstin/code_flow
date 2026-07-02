@@ -60,6 +60,14 @@ class Settings:
         os.getenv("CODE_AGENT_MAX_REFERENCED_TICKETS", "5")
     )
     CODE_AGENT_LSP_TIMEOUT: int = int(os.getenv("CODE_AGENT_LSP_TIMEOUT", "30"))
+    # Per-request LLM timeout (seconds) and retry count. Without a timeout a
+    # stalled provider response hangs the whole run (planner/dev/verifier/qa)
+    # indefinitely, so this bounds every completion call.
+    CODE_AGENT_LLM_TIMEOUT: int = int(os.getenv("CODE_AGENT_LLM_TIMEOUT", "120"))
+    CODE_AGENT_LLM_MAX_RETRIES: int = int(os.getenv("CODE_AGENT_LLM_MAX_RETRIES", "1"))
+    # Timeout (seconds) for Jira REST calls so referenced-ticket resolution and
+    # sync can never hang a run.
+    CODE_AGENT_JIRA_TIMEOUT: int = int(os.getenv("CODE_AGENT_JIRA_TIMEOUT", "20"))
     CODE_AGENT_ANALYZE_BLOCKING: bool = os.getenv("CODE_AGENT_ANALYZE_BLOCKING", "true").lower() in (
         "1",
         "true",
