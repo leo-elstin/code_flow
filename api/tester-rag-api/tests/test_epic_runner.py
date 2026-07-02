@@ -17,30 +17,57 @@ from app.services import epic_run_store
 class FakeRunner:
     """Stand-in for CodeAgentRunner: each child goes awaiting → terminal."""
 
-    def __init__(self, outcomes: dict[int, str]):
+    def __init__(
+        self,
+        outcomes: dict[int, str],
+        retry_outcomes: dict[int, str] | None = None,
+        clarify: set[int] | None = None,
+    ):
         self.outcomes = outcomes          # ticket_id -> "completed" | "failed"
+        self.retry_outcomes = retry_outcomes or {}
+        self.clarify = clarify or set()   # tickets whose planner asks questions
         self.started: list[int] = []      # ticket_ids in start order
+        self.retried: list[int] = []      # ticket_ids retried via retry_run
         self.completed: set[int] = set()
         self.start_snapshot: dict[int, set] = {}  # completed-set at each start
         self._byrun: dict[str, dict] = {}
         self._n = 0
+
+    def _task_running(self, run_id):
+        return False
+
+    async def wait_for_task(self, run_id, timeout):
+        return None
 
     async def start_run(self, request, project_path, ticket_id=None):
         self.started.append(ticket_id)
         self.start_snapshot[ticket_id] = set(self.completed)
         self._n += 1
         rid = f"run-{ticket_id}-{self._n}"
-        self._byrun[rid] = {"ticket_id": ticket_id, "phase": "awaiting"}
+        phase = "clarify" if ticket_id in self.clarify else "awaiting"
+        self._byrun[rid] = {"ticket_id": ticket_id, "phase": phase}
         return rid
 
     async def approve_run(self, run_id, *, workspace_mode="worktree", base_ref=None):
         self._byrun[run_id]["phase"] = "terminal"
         return {"status": "developing"}
 
+    async def retry_run(self, run_id):
+        info = self._byrun[run_id]
+        tid = info["ticket_id"]
+        self.retried.append(tid)
+        self.outcomes[tid] = self.retry_outcomes.get(tid, "completed")
+        self._n += 1
+        rid = f"run-{tid}-{self._n}"
+        self._byrun[rid] = {"ticket_id": tid, "phase": "terminal"}
+        return {"run_id": rid, "status": "developing"}
+
     async def get_state(self, run_id):
         info = self._byrun.get(run_id)
         if not info:
             return None
+        if info["phase"] == "clarify":
+            return {"status": "awaiting_clarification", "run_id": run_id}
         if info["phase"] == "awaiting":
             return {"status": "awaiting_approval", "run_id": run_id}
         outcome = self.outcomes.get(info["ticket_id"], "completed")
@@ -57,7 +84,8 @@ def _patch_common(monkeypatch, tmp, fake):
     monkeypatch.setattr(er_mod, "_create_integration_worktree", lambda *a, **k: "/tmp/intwt")
     monkeypatch.setattr(er_mod, "_open_integration_worktree", lambda *a, **k: "/tmp/intwt")
     monkeypatch.setattr(er_mod, "_merge_child_into_integration", lambda *a, **k: {"applied": True})
-    monkeypatch.setattr(er_mod, "_POLL_INTERVAL_S", 0.01)
+    monkeypatch.setattr(er_mod, "_POLL_MIN_S", 0.001)
+    monkeypatch.setattr(er_mod, "_POLL_MAX_S", 0.01)
 
     epic = {"id": 10, "project_id": 1, "jira_key": "E-10", "title": "Epic"}
     children = [
@@ -220,3 +248,143 @@ def test_epic_resume_rejected_when_not_failed(monkeypatch):
 
         with pytest.raises(ValueError, match="only available for failed"):
             asyncio.run(er.resume_epic_run(final["epic_run_id"]))
+
+
+async def _drive_auto(er, ticket_id, **kwargs):
+    """Drive a full-auto epic: planning chains straight into execution, so keep
+    awaiting whichever task is registered until the epic settles."""
+    state = await er.start_epic_run(ticket_id, **kwargs)
+    eid = state["epic_run_id"]
+    for _ in range(4):
+        task = er._tasks.get(eid)
+        if task:
+            await task
+        current = await er.get_state(eid)
+        if current["status"] in {"completed", "failed", "rejected"}:
+            return current
+    return await er.get_state(eid)
+
+
+def _spy_statuses(monkeypatch):
+    """Record every status written to the epic run store."""
+    statuses: list[str] = []
+    orig = epic_run_store.update_epic_run
+
+    def spy(eid, **kwargs):
+        if "status" in kwargs:
+            statuses.append(kwargs["status"])
+        return orig(eid, **kwargs)
+
+    monkeypatch.setattr(epic_run_store, "update_epic_run", spy)
+    return statuses
+
+
+def test_auto_approve_skips_gate_and_completes(monkeypatch):
+    with tempfile.TemporaryDirectory() as tmp:
+        fake = FakeRunner(outcomes={1: "completed", 2: "completed", 3: "completed"})
+        _patch_common(monkeypatch, tmp, fake)
+        statuses = _spy_statuses(monkeypatch)
+        er = er_mod.EpicAgentRunner()
+
+        final = asyncio.run(_drive_auto(er, 10, auto_approve=True))
+
+        assert final["status"] == "completed"
+        assert final["auto_approve"] is True
+        assert "awaiting_approval" not in statuses
+        assert set(fake.started) == {1, 2, 3}
+
+
+def test_auto_approve_defaults_from_settings(monkeypatch):
+    with tempfile.TemporaryDirectory() as tmp:
+        fake = FakeRunner(outcomes={1: "completed", 2: "completed", 3: "completed"})
+        _patch_common(monkeypatch, tmp, fake)
+        monkeypatch.setattr(er_mod.settings, "EPIC_AUTO_APPROVE", True)
+        statuses = _spy_statuses(monkeypatch)
+        er = er_mod.EpicAgentRunner()
+
+        final = asyncio.run(_drive_auto(er, 10))  # no explicit flag
+
+        assert final["status"] == "completed"
+        assert final["auto_approve"] is True
+        assert "awaiting_approval" not in statuses
+
+
+def test_auto_retry_recovers_failed_child(monkeypatch):
+    with tempfile.TemporaryDirectory() as tmp:
+        fake = FakeRunner(
+            outcomes={1: "completed", 2: "failed", 3: "completed"},
+            retry_outcomes={2: "completed"},
+        )
+        _patch_common(monkeypatch, tmp, fake)
+        er = er_mod.EpicAgentRunner()
+
+        final = asyncio.run(_drive_auto(er, 10, auto_approve=True))
+
+        assert final["status"] == "completed"
+        assert fake.retried == [2]
+        # Child entry repointed to the retry's new run_id.
+        assert final["child_runs"]["2"]["run_id"] in fake._byrun
+        assert final["child_runs"]["2"]["status"] == "completed"
+        assert 3 in fake.started  # dependent unblocked by the successful retry
+
+
+def test_auto_retry_exhausted_fails_epic(monkeypatch):
+    with tempfile.TemporaryDirectory() as tmp:
+        fake = FakeRunner(
+            outcomes={1: "completed", 2: "failed", 3: "completed"},
+            retry_outcomes={2: "failed"},
+        )
+        _patch_common(monkeypatch, tmp, fake)
+        er = er_mod.EpicAgentRunner()
+
+        final = asyncio.run(_drive_auto(er, 10, auto_approve=True))
+
+        assert final["status"] == "failed"
+        assert fake.retried == [2]  # bounded: exactly one retry by default
+        assert 3 not in fake.started
+
+
+def test_auto_retry_disabled_when_zero(monkeypatch):
+    with tempfile.TemporaryDirectory() as tmp:
+        fake = FakeRunner(outcomes={1: "completed", 2: "failed", 3: "completed"})
+        _patch_common(monkeypatch, tmp, fake)
+        monkeypatch.setattr(er_mod.settings, "EPIC_CHILD_AUTO_RETRIES", 0)
+        er = er_mod.EpicAgentRunner()
+
+        final = asyncio.run(_drive_auto(er, 10, auto_approve=True))
+
+        assert final["status"] == "failed"
+        assert fake.retried == []
+
+
+def test_manual_epic_does_not_auto_retry(monkeypatch):
+    with tempfile.TemporaryDirectory() as tmp:
+        fake = FakeRunner(
+            outcomes={1: "completed", 2: "failed", 3: "completed"},
+            retry_outcomes={2: "completed"},
+        )
+        _patch_common(monkeypatch, tmp, fake)
+        er = er_mod.EpicAgentRunner()
+
+        final = asyncio.run(_drive(er, 10))
+
+        assert final["status"] == "failed"
+        assert fake.retried == []
+
+
+def test_child_clarification_fails_fast(monkeypatch):
+    """A child whose planner asks questions fails promptly instead of burning
+    the child timeout — there is no human in the epic loop to answer."""
+    with tempfile.TemporaryDirectory() as tmp:
+        fake = FakeRunner(
+            outcomes={1: "completed", 2: "completed", 3: "completed"},
+            clarify={2},
+        )
+        _patch_common(monkeypatch, tmp, fake)
+        er = er_mod.EpicAgentRunner()
+
+        final = asyncio.run(_drive(er, 10))
+
+        assert final["status"] == "failed"
+        assert final["child_runs"]["2"]["status"] == "failed"
+        assert 3 not in fake.started

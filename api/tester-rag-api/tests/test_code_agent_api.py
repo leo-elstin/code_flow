@@ -216,3 +216,40 @@ def test_runner_retry_run_without_worktree():
             assert seeded["attempt"] == 2
 
     asyncio.run(_run())
+
+
+def test_start_epic_run_passes_auto_approve(client):
+    """POST /epics/{id}/run forwards the optional auto_approve body flag."""
+    from app.api.code_agent import routes as routes_mod
+    from app.orchestration.epic_runner import epic_runner
+
+    with patch.object(routes_mod, "get_ticket", return_value={"id": 10}), \
+         patch.object(epic_runner, "start_epic_run", new_callable=AsyncMock) as mock_start:
+        mock_start.return_value = {"epic_run_id": "e-1", "status": "planning"}
+
+        # No body → auto_approve None (server default applies).
+        res = client.post("/api/code-agent/epics/10/run")
+        assert res.status_code == 202
+        assert mock_start.call_args.kwargs["auto_approve"] is None
+
+        # Explicit body → flag forwarded.
+        res = client.post("/api/code-agent/epics/10/run", json={"auto_approve": True})
+        assert res.status_code == 202
+        assert mock_start.call_args.kwargs["auto_approve"] is True
+
+
+def test_epic_response_includes_auto_approve(client):
+    from app.orchestration.epic_runner import epic_runner
+
+    state = {
+        "epic_run_id": "e-1",
+        "epic_ticket_id": 10,
+        "status": "developing",
+        "auto_approve": True,
+        "child_runs": {},
+    }
+    with patch.object(epic_runner, "get_state", new_callable=AsyncMock) as mock_get:
+        mock_get.return_value = state
+        res = client.get("/api/code-agent/epics/e-1")
+        assert res.status_code == 200
+        assert res.json()["auto_approve"] is True
