@@ -40,7 +40,10 @@ from app.tools.git_tools import GitMergeError, abort_merge_if_in_progress, commi
 logger = get_logger("epic_runner")
 
 _TERMINAL = {"completed", "failed", "rejected"}
-_POLL_INTERVAL_S = 2.0
+# Fallback poll bounds for the rare gaps where no in-process task is awaitable
+# (between task hand-offs, or when the run lives in another process).
+_POLL_MIN_S = 0.5
+_POLL_MAX_S = 5.0
 # Upper bound a single child run may take before the epic gives up waiting on it.
 _CHILD_TIMEOUT_S = int(os.getenv("EPIC_CHILD_TIMEOUT_S", str(60 * 60)))
 
@@ -166,15 +169,27 @@ class EpicAgentRunner:
             self._tasks.pop(eid, None)
 
     async def _wait_for(self, run_id: str, statuses: set[str]) -> dict | None:
-        """Poll a child run until its status is in *statuses* (or it times out)."""
-        waited = 0.0
-        while waited <= _CHILD_TIMEOUT_S:
+        """Wait for a child run to reach one of *statuses* (or time out).
+
+        Event-driven: awaits the child's in-process asyncio task (which ends at
+        the planner interrupt and at terminal states) instead of polling every
+        few seconds — each poll used to open the checkpointer and trigger a
+        run-index/Jira sync. Falls back to a short adaptive sleep for the gaps
+        where no task is registered (between hand-offs / cross-process runs)."""
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + _CHILD_TIMEOUT_S
+        sleep_s = _POLL_MIN_S
+        while True:
+            remaining = deadline - loop.time()
             state = await runner.get_state(run_id)
-            if state and state.get("status") in statuses:
+            if (state and state.get("status") in statuses) or remaining <= 0:
                 return state
-            await asyncio.sleep(_POLL_INTERVAL_S)
-            waited += _POLL_INTERVAL_S
-        return await runner.get_state(run_id)
+            if runner._task_running(run_id):
+                await runner.wait_for_task(run_id, timeout=remaining)
+                sleep_s = _POLL_MIN_S
+            else:
+                await asyncio.sleep(min(sleep_s, remaining))
+                sleep_s = min(sleep_s * 2, _POLL_MAX_S)
 
     # -- public API ----------------------------------------------------------
 

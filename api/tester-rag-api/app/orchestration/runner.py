@@ -200,6 +200,22 @@ class CodeAgentRunner:
         task = self._tasks.get(run_id)
         return task is not None and not task.done()
 
+    async def wait_for_task(self, run_id: str, timeout: float) -> None:
+        """Wait until the run's current in-process asyncio task finishes.
+
+        The per-run task ends exactly at the planner interrupt and again at a
+        terminal state, so callers (e.g. the epic runner) can await a phase
+        transition instead of polling. No-op when no task is registered — the
+        run may live in another process; callers must re-check state. The task
+        is shielded so a timeout here never cancels the run itself."""
+        task = self._tasks.get(run_id)
+        if task is None or task.done():
+            return
+        try:
+            await asyncio.wait_for(asyncio.shield(task), timeout=timeout)
+        except Exception:  # noqa: BLE001 — run errors surface via run state
+            pass
+
     async def _patch_state(self, run_id: str, patch: dict[str, Any]) -> FeatureRunState | None:
         async with self._checkpointer() as checkpointer:
             graph = await self._compile(checkpointer)
