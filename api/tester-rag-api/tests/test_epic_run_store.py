@@ -64,6 +64,59 @@ def test_ensure_schema_is_idempotent(isolated_epic_store):
     assert store.list_epic_runs() == []
 
 
+def test_auto_approve_round_trip(isolated_epic_store):
+    row = store.create_epic_run("e1", epic_ticket_id=1, project_id=1, auto_approve=True)
+    assert row["auto_approve"] is True
+    assert store.get_epic_run("e1")["auto_approve"] is True
+
+    default = store.create_epic_run("e2", epic_ticket_id=2, project_id=1)
+    assert default["auto_approve"] is False
+
+    updated = store.update_epic_run("e2", auto_approve=True)
+    assert updated["auto_approve"] is True
+
+
+def test_auto_approve_column_migration(isolated_epic_store):
+    """A DB created before auto mode (no auto_approve column) is migrated by
+    ensure_schema, and old rows read back as auto_approve=False."""
+    import sqlite3
+
+    conn = sqlite3.connect(store._DB_PATH)
+    with conn:
+        conn.execute(
+            """
+            CREATE TABLE epic_runs (
+                id TEXT PRIMARY KEY,
+                project_id INTEGER,
+                project_path TEXT NOT NULL DEFAULT '',
+                epic_ticket_id INTEGER NOT NULL,
+                epic_jira_key TEXT,
+                status TEXT NOT NULL DEFAULT 'planning',
+                workspace_mode TEXT NOT NULL DEFAULT 'worktree',
+                integration_branch TEXT,
+                plan_json TEXT,
+                child_runs_json TEXT,
+                error TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            "INSERT INTO epic_runs (id, epic_ticket_id, created_at, updated_at)"
+            " VALUES ('old-1', 10, 't', 't')"
+        )
+    conn.close()
+
+    store.ensure_schema()
+    store.ensure_schema()  # migration must be idempotent
+
+    old = store.get_epic_run("old-1")
+    assert old["auto_approve"] is False
+    new = store.create_epic_run("new-1", epic_ticket_id=11, project_id=1, auto_approve=True)
+    assert new["auto_approve"] is True
+
+
 def test_list_children_returns_epic_stories(isolated_ticket_store, tmp_path):
     # Build a project, then a Jira epic with two child stories.
     import subprocess
