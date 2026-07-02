@@ -56,6 +56,16 @@ class Settings:
         "true",
         "yes",
     )
+    # Epic full-auto mode: default for the per-request auto_approve flag. When
+    # true (or when a start-epic request passes auto_approve=true) the epic plan
+    # is executed immediately without the human approval gate, and failed child
+    # stories are retried automatically up to EPIC_CHILD_AUTO_RETRIES times.
+    EPIC_AUTO_APPROVE: bool = os.getenv("EPIC_AUTO_APPROVE", "false").lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+    EPIC_CHILD_AUTO_RETRIES: int = int(os.getenv("EPIC_CHILD_AUTO_RETRIES", "1"))
     DART_BIN: str = os.getenv("DART_BIN", "dart")
     FLUTTER_BIN: str = os.getenv("FLUTTER_BIN", "flutter")
     CODE_AGENT_CORS_ORIGINS: str = os.getenv("CODE_AGENT_CORS_ORIGINS", "*")

@@ -57,6 +57,7 @@ def ensure_schema() -> None:
                 status TEXT NOT NULL DEFAULT 'planning',
                 workspace_mode TEXT NOT NULL DEFAULT 'worktree',
                 integration_branch TEXT,
+                auto_approve INTEGER NOT NULL DEFAULT 0,
                 plan_json TEXT,
                 child_runs_json TEXT,
                 error TEXT,
@@ -71,6 +72,12 @@ def ensure_schema() -> None:
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_epic_runs_epic_ticket ON epic_runs(epic_ticket_id)"
         )
+        # Additive column migration for databases created before auto mode.
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(epic_runs)")}
+        if "auto_approve" not in cols:
+            conn.execute(
+                "ALTER TABLE epic_runs ADD COLUMN auto_approve INTEGER NOT NULL DEFAULT 0"
+            )
 
 
 def _row_to_epic_run(row: sqlite3.Row) -> dict:
@@ -83,6 +90,7 @@ def _row_to_epic_run(row: sqlite3.Row) -> dict:
         "status": row["status"],
         "workspace_mode": row["workspace_mode"],
         "integration_branch": row["integration_branch"],
+        "auto_approve": bool(row["auto_approve"]),
         # plan_json: {"levels": [[ticket_id, ...], ...], "edges": {ticket_id: [dep_ids]}, ...}
         "plan": json.loads(row["plan_json"] or "null"),
         # child_runs_json: {str(ticket_id): {"run_id": ..., "status": ..., "jira_key": ...}}
@@ -101,6 +109,7 @@ def create_epic_run(
     project_path: str = "",
     epic_jira_key: str | None = None,
     workspace_mode: str = "worktree",
+    auto_approve: bool = False,
 ) -> dict:
     ensure_schema()
     now = _now_iso()
@@ -109,8 +118,8 @@ def create_epic_run(
             """
             INSERT INTO epic_runs
               (id, project_id, project_path, epic_ticket_id, epic_jira_key, status,
-               workspace_mode, child_runs_json, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, 'planning', ?, '{}', ?, ?)
+               workspace_mode, auto_approve, child_runs_json, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, 'planning', ?, ?, '{}', ?, ?)
             """,
             (
                 epic_run_id,
@@ -119,6 +128,7 @@ def create_epic_run(
                 epic_ticket_id,
                 epic_jira_key,
                 workspace_mode,
+                int(bool(auto_approve)),
                 now,
                 now,
             ),
@@ -140,6 +150,7 @@ _COLUMN_MAP = {
     "status": "status",
     "workspace_mode": "workspace_mode",
     "integration_branch": "integration_branch",
+    "auto_approve": "auto_approve",
     "plan": "plan_json",
     "child_runs": "child_runs_json",
     "error": "error",
