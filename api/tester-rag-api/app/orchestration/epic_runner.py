@@ -547,6 +547,10 @@ class EpicAgentRunner:
             return "failed"
         if status == "awaiting_approval":
             await runner.approve_run(run_id, workspace_mode="worktree", base_ref=base_ref)
+            # Reflect the developing phase in the epic panel — otherwise the child
+            # shows "planning" until it terminates (the event-driven wait doesn't
+            # poll intermediate states).
+            epic_run_store.set_child_run(epic_run_id, ticket_id, status="developing")
             state = await self._wait_for(run_id, _TERMINAL)
             status = state.get("status") if state else None
 

@@ -124,6 +124,26 @@ export default function Home() {
     };
   }, [activeRunId, runStatus]);
 
+  // Board polling: keep the kanban columns live whenever ANY ticket is in an
+  // active status (planning → qa). The single-run polling loop above only fires
+  // for a selected run, so epic children — which advance in the background —
+  // never refreshed the board without this. Depends on a derived boolean so it
+  // only (re)arms when activity starts/stops, not on every poll.
+  const hasActiveTickets = tickets.some((t) =>
+    ['planning', 'awaiting_approval', 'developing', 'verifying', 'qa'].includes(t.status)
+  );
+  useEffect(() => {
+    if (!(selectedProjectId && hasActiveTickets)) return;
+    const id = setInterval(async () => {
+      try {
+        setTickets(await CodeAgentApiClient.listTickets(selectedProjectId));
+      } catch (e) {
+        console.error('Board ticket poll error:', e);
+      }
+    }, 3000);
+    return () => clearInterval(id);
+  }, [hasActiveTickets, selectedProjectId]);
+
   const startPolling = (runId: string) => {
     if (pollingIntervalRef.current) return;
 
