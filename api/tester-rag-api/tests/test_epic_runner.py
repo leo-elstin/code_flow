@@ -39,7 +39,7 @@ class FakeRunner:
     async def wait_for_task(self, run_id, timeout):
         return None
 
-    async def start_run(self, request, project_path, ticket_id=None):
+    async def start_run(self, request, project_path, ticket_id=None, *, auto_approve=None):
         self.started.append(ticket_id)
         self.start_snapshot[ticket_id] = set(self.completed)
         self._n += 1

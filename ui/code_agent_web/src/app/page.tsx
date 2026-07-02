@@ -372,7 +372,7 @@ export default function Home() {
     toast.success('Epic planning started');
   };
 
-  const handleStartRun = async (ticketId: number) => {
+  const handleStartRun = async (ticketId: number, autoApprove?: boolean) => {
     const project = projects.find(p => p.id === selectedProjectId);
     const ticket = tickets.find(t => t.id === ticketId);
     if (!project || !ticket) return;
@@ -387,7 +387,8 @@ export default function Home() {
       const runId = await CodeAgentApiClient.startRun(
         ticket.description || ticket.title,
         project.path,
-        ticket.id
+        ticket.id,
+        autoApprove
       );
       setActiveRunId(runId);
       

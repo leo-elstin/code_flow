@@ -144,13 +144,19 @@ export class CodeAgentApiClient {
     });
   }
 
-  static async startRun(request: string, projectPath: string, ticketId?: number): Promise<string> {
+  static async startRun(
+    request: string,
+    projectPath: string,
+    ticketId?: number,
+    autoApprove?: boolean
+  ): Promise<string> {
     const data = await this._request<{ run_id: string }>('/api/code-agent/run', {
       method: 'POST',
       body: JSON.stringify({
         request,
         project_path: projectPath,
         ticket_id: ticketId,
+        ...(autoApprove === undefined ? {} : { auto_approve: autoApprove }),
       }),
     });
     return data.run_id;

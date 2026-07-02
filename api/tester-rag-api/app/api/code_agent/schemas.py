@@ -5,6 +5,8 @@ class StartRunRequest(BaseModel):
     request: str = Field(..., description="Feature request for the code agent pipeline")
     project_path: str = Field(..., description="Absolute path to the target git repository")
     ticket_id: int | None = None
+    # None = fall back to the CODE_AGENT_AUTO_APPROVE server default.
+    auto_approve: bool | None = None
 
 
 class StartRunResponse(BaseModel):

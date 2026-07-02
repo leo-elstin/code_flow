@@ -52,7 +52,7 @@ interface CenterPaneProps {
   isBusy: boolean;
   isRunLoading: boolean;
   onClearRunView: () => void;
-  onStartRun: (ticketId: number) => Promise<void>;
+  onStartRun: (ticketId: number, autoApprove?: boolean) => Promise<void>;
   onApproveRun: (workspaceMode: 'worktree' | 'in_place') => Promise<void>;
   onRejectRun: (feedback?: string) => Promise<void>;
   onRetryRun: () => Promise<void>;
@@ -87,6 +87,7 @@ export default function CenterPane({
 }: CenterPaneProps) {
   const [activeTab, setActiveTab] = useState('overview');
   const [isApproveOpen, setIsApproveOpen] = useState(false);
+  const [autoApprove, setAutoApprove] = useState(false);
 
   const planMarkdown: string | undefined = run?.plan?.plan_markdown as string | undefined;
 
@@ -169,7 +170,7 @@ export default function CenterPane({
   const handleStartWork = async () => {
     setActionError('');
     try {
-      await onStartRun(ticket.id);
+      await onStartRun(ticket.id, autoApprove);
     } catch (err: any) {
       setActionError(err.message || 'Failed to start execution');
     }
@@ -638,7 +639,19 @@ export default function CenterPane({
         )}
 
         {/* Primary Executor Action Button */}
-        <div className="flex-1 flex gap-2 justify-end">
+        <div className="flex-1 flex gap-2 justify-end items-center">
+          {/* Auto-approve toggle — only before a run exists */}
+          {!run && (
+            <label className="flex items-center gap-1.5 text-[11px] text-slate-500 cursor-pointer select-none mr-1" title="Skip the Review & Approve gate and go straight to development">
+              <input
+                type="checkbox"
+                checked={autoApprove}
+                onChange={(e) => setAutoApprove(e.target.checked)}
+                className="rounded border-slate-300"
+              />
+              Auto-approve
+            </label>
+          )}
           {/* Merge to base branch */}
           {run && run.status === 'completed' && run.worktree_path && !run.merge_report?.applied && (
             <Button
