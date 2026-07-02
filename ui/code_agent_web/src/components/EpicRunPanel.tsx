@@ -372,6 +372,16 @@ export default function EpicRunPanel({ ticket, tickets, projectId, jiraBaseUrl, 
               Continues from where it stopped — keeps the {done} completed{' '}
               {done === 1 ? 'story' : 'stories'}, re-runs the rest.
             </p>
+            <label className="flex items-center gap-2 pt-1 text-xs text-slate-600 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={autoMode}
+                onChange={(e) => setAutoMode(e.target.checked)}
+                className="rounded border-slate-300"
+              />
+              <Zap size={12} className="text-violet-500 flex-shrink-0" />
+              Full auto on restart — skip plan approval, auto-retry failed stories
+            </label>
             <button
               onClick={handleStart}
               disabled={isBusy}
