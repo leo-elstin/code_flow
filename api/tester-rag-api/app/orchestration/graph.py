@@ -1,3 +1,5 @@
+import asyncio
+
 from langgraph.graph import END, START, StateGraph
 
 from app.agents.roles.dev import run_dev
@@ -12,16 +14,50 @@ from app.services.run_activity import append_activity
 logger = get_logger("graph")
 
 
+async def _enrich_linked_issues_context(state: FeatureRunState) -> str | None:
+    """Pull the bodies of Jira tickets named in the request into the linked-issues
+    context, so the planner sees referenced rules (e.g. a cross-project ticket
+    like OIPO-667) instead of stopping to ask about them.
+
+    Runs on every planning pass — fresh run, resume, or retry — so answering a
+    clarification and re-planning also benefits. Idempotent and best-effort: the
+    original context stands on any failure or when nothing new is referenced."""
+    linked = state.get("linked_issues_context")
+    if not settings.CODE_AGENT_RESOLVE_REFERENCED_TICKETS:
+        return linked
+    if linked and "Referenced Jira tickets" in linked:
+        return linked  # already enriched (e.g. at run creation)
+    try:
+        from app.services.jira_service import build_referenced_tickets_context
+
+        ref_text = "\n".join(
+            [state.get("user_request") or "", *(state.get("acceptance_criteria_hint") or [])]
+        )
+        referenced = await asyncio.to_thread(build_referenced_tickets_context, ref_text)
+    except Exception as exc:  # noqa: BLE001 — enrichment is best-effort
+        logger.warning(
+            "Referenced-ticket enrichment (planner) failed run_id=%s: %s",
+            state.get("run_id", ""), exc,
+        )
+        return linked
+    if not referenced:
+        return linked
+    logger.info("Planner enriched with referenced Jira ticket(s) run_id=%s", state.get("run_id", ""))
+    existing = (linked or "").strip()
+    return f"{existing}\n\n{referenced}".strip() if existing else referenced
+
+
 async def planner_node(state: FeatureRunState) -> dict:
     run_id = state.get("run_id", "")
     logger.info("Planner starting run_id=%s", run_id)
     try:
+        linked_issues_context = await _enrich_linked_issues_context(state)
         result = await run_planner(
             state["user_request"],
             state["project_path"],
             run_id=run_id or None,
             attachment_paths=state.get("attachment_paths") or None,
-            linked_issues_context=state.get("linked_issues_context"),
+            linked_issues_context=linked_issues_context,
             acceptance_criteria_hint=state.get("acceptance_criteria_hint") or None,
             clarification_answers=state.get("clarification_answers") or None,
         )
