@@ -35,7 +35,13 @@ from app.services import epic_run_store
 from app.services.project_ticket_store import get_project, get_ticket, list_children
 from app.services.run_activity import append_activity
 from app.services.worktree import remove_worktree, resolve_worktree_path
-from app.tools.git_tools import GitMergeError, abort_merge_if_in_progress, commit_all, merge_branch
+from app.tools.git_tools import (
+    GitMergeError,
+    abort_merge_if_in_progress,
+    commit_all,
+    get_checkout_branch,
+    merge_branch,
+)
 
 logger = get_logger("epic_runner")
 
@@ -132,14 +138,25 @@ def _open_integration_worktree(
 
 
 def _merge_child_into_integration(
-    project_path: str, integration_wt: str, child_run_id: str, epic_run_id: str
+    project_path: str,
+    integration_wt: str,
+    child_run_id: str,
+    epic_run_id: str,
+    child_wt: str | None = None,
 ) -> dict:
     """Commit a completed child's staged edits, then merge its branch into the
-    integration branch. Returns ``{applied, error?, conflict_files?}``."""
-    child_wt = resolve_worktree_path(project_path, run_id=child_run_id)
+    integration branch. Returns ``{applied, error?, conflict_files?}``.
+
+    ``child_wt`` may be passed explicitly because an auto-retried child reuses
+    its parent run's worktree: the entry's run_id is the retry's, but the
+    worktree (and its checked-out ``agent/<parent_run_id>`` branch) is not."""
+    child_wt = child_wt or resolve_worktree_path(project_path, run_id=child_run_id)
     child_branch = f"agent/{child_run_id}"
     try:
         if os.path.isdir(child_wt):
+            checked_out = get_checkout_branch(child_wt)
+            if checked_out:
+                child_branch = checked_out
             commit_all(child_wt, f"Epic {epic_run_id}: child run {child_run_id}")
         abort_merge_if_in_progress(integration_wt)
         merge_branch(integration_wt, child_branch)
@@ -361,6 +378,7 @@ class EpicAgentRunner:
         try:
             state = epic_run_store.get_epic_run(epic_run_id)
             project_path = state["project_path"]
+            auto_retry = bool(state.get("auto_approve"))
             levels: list[list[int]] = (state.get("plan") or {}).get("levels") or []
 
             # Set up the shared integration branch (best-effort: if it fails we
@@ -404,7 +422,9 @@ class EpicAgentRunner:
                 base_ref = integration_branch if integration_wt else None
                 results = await asyncio.gather(
                     *[
-                        self._execute_child(epic_run_id, tid, project_path, base_ref)
+                        self._execute_child(
+                            epic_run_id, tid, project_path, base_ref, auto_retry=auto_retry
+                        )
                         for tid in pending
                     ],
                     return_exceptions=True,
@@ -412,14 +432,20 @@ class EpicAgentRunner:
 
                 # Merge each newly-completed child into the integration branch in
                 # order. Only children executed this pass are merged — earlier
-                # completions are already on the branch.
+                # completions are already on the branch. Merges MUST stay
+                # sequential: they all mutate the single integration worktree.
                 if integration_wt:
                     for tid in pending:
                         entry = ((epic_run_store.get_epic_run(epic_run_id) or {}).get("child_runs") or {}).get(str(tid)) or {}
                         if entry.get("status") == "completed" and entry.get("run_id"):
+                            # A retried child reuses its parent's worktree, so
+                            # resolve the real worktree from the run state.
+                            child_state = await runner.get_state(entry["run_id"])
+                            child_wt = (child_state or {}).get("worktree_path")
                             merged = await asyncio.to_thread(
                                 _merge_child_into_integration,
                                 project_path, integration_wt, entry["run_id"], epic_run_id,
+                                child_wt,
                             )
                             if not merged.get("applied"):
                                 msg = f"Merge conflict integrating ticket {tid}: {merged.get('error')}"
@@ -449,9 +475,19 @@ class EpicAgentRunner:
             self._reap_tasks(exclude=epic_run_id)
 
     async def _execute_child(
-        self, epic_run_id: str, ticket_id: int, project_path: str, base_ref: str | None
+        self,
+        epic_run_id: str,
+        ticket_id: int,
+        project_path: str,
+        base_ref: str | None,
+        *,
+        auto_retry: bool = False,
     ) -> str:
-        """Run one child story to a terminal state; returns its final status."""
+        """Run one child story to a terminal state; returns its final status.
+
+        With ``auto_retry`` (full-auto mode) a failed child is retried up to
+        ``EPIC_CHILD_AUTO_RETRIES`` times via :meth:`CodeAgentRunner.retry_run`
+        before the failure is surfaced to the epic."""
         ticket = get_ticket(ticket_id)
         if not ticket:
             epic_run_store.set_child_run(epic_run_id, ticket_id, status="failed")
@@ -488,6 +524,43 @@ class EpicAgentRunner:
             status = state.get("status") if state else None
 
         final = status or "failed"
+        retries = 0
+        while final == "failed" and auto_retry and retries < settings.EPIC_CHILD_AUTO_RETRIES:
+            retries += 1
+            append_activity(
+                epic_run_id, type="status", phase="dev",
+                title=f"Auto-retrying ticket {ticket_id} (attempt {retries})",
+            )
+            try:
+                new_state = await runner.retry_run(run_id)
+            except ValueError as exc:
+                logger.warning(
+                    "Epic %s auto-retry of run %s unavailable: %s", epic_run_id, run_id, exc
+                )
+                break
+            if not new_state or not new_state.get("run_id"):
+                break
+            # retry_run mints a NEW run_id — repoint the child entry so status
+            # reads and the merge step reference the live execution.
+            run_id = new_state["run_id"]
+            epic_run_store.set_child_run(
+                epic_run_id, ticket_id, run_id=run_id,
+                status=new_state.get("status") or "developing",
+            )
+            state = await self._wait_for(
+                run_id, {"awaiting_approval", "awaiting_clarification"} | _TERMINAL
+            )
+            status = state.get("status") if state else None
+            if status == "awaiting_clarification":
+                final = "failed"
+                break
+            if status == "awaiting_approval":
+                # No-worktree retries re-plan from scratch and pause at the gate.
+                await runner.approve_run(run_id, workspace_mode="worktree", base_ref=base_ref)
+                state = await self._wait_for(run_id, _TERMINAL)
+                status = state.get("status") if state else None
+            final = status or "failed"
+
         epic_run_store.set_child_run(epic_run_id, ticket_id, status=final)
         return final
 
