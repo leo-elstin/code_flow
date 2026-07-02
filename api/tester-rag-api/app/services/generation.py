@@ -23,7 +23,12 @@ async def acompletion(
     messages: list,
     **kwargs: Any,
 ) -> Any:
-    """Thin async wrapper around litellm.acompletion for tool-calling and streaming callers."""
+    """Thin async wrapper around litellm.acompletion for tool-calling and streaming callers.
+
+    Applies a default request timeout/retry so a stalled provider response can
+    never hang a run indefinitely; explicit caller values win."""
+    kwargs.setdefault("timeout", settings.CODE_AGENT_LLM_TIMEOUT)
+    kwargs.setdefault("num_retries", settings.CODE_AGENT_LLM_MAX_RETRIES)
     return await litellm.acompletion(model=model, messages=messages, **kwargs)
 
 
@@ -49,6 +54,8 @@ async def chat_completion_json(
         model=model,
         messages=messages,
         response_format={"type": "json_object"},
+        timeout=settings.CODE_AGENT_LLM_TIMEOUT,
+        num_retries=settings.CODE_AGENT_LLM_MAX_RETRIES,
     )
 
     content = response.choices[0].message.content or "{}"
