@@ -98,6 +98,13 @@ def _create_integration_worktree(
         ["git", "-C", project_path, "rev-parse", "HEAD"],
         capture_output=True, text=True, check=True,
     ).stdout.strip()
+    # Drop stale worktree registrations first: a fixed feature/<KEY> branch left
+    # checked out in a removed-but-unpruned worktree would otherwise block
+    # `worktree add` with "already checked out", failing integration setup.
+    subprocess.run(
+        ["git", "-C", project_path, "worktree", "prune"],
+        capture_output=True, text=True, check=False,
+    )
     wt_path = resolve_worktree_path(project_path, run_id=f"epic-{epic_run_id}")
     os.makedirs(os.path.dirname(wt_path), exist_ok=True)
     if os.path.exists(wt_path):
