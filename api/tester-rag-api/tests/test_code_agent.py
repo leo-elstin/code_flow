@@ -599,8 +599,12 @@ def test_prepare_in_place_workspace(tmp_path):
     assert info["branch"] is None
 
 
-def test_prepare_in_place_rejects_dirty_repo(tmp_path):
-    from app.services.worktree import WorktreeError, prepare_workspace
+def test_prepare_in_place_allows_dirty_repo(tmp_path, monkeypatch):
+    # In-place now snapshots files before editing and rolls back from those
+    # snapshots, so a dirty tree is allowed and the user's uncommitted work is
+    # left intact at workspace prep.
+    from app.services import worktree as wt_mod
+    from app.services.worktree import prepare_workspace
 
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -611,11 +615,15 @@ def test_prepare_in_place_rejects_dirty_repo(tmp_path):
     subprocess.run(["git", "add", "."], cwd=repo, check=True)
     subprocess.run(["git", "commit", "-m", "init"], cwd=repo, check=True)
 
-    # Introduce an uncommitted tracked change — in-place must refuse to protect it.
+    # Uncommitted tracked change present at start.
     (repo / "README.md").write_text("# test (work in progress)", encoding="utf-8")
 
-    with pytest.raises(WorktreeError):
-        prepare_workspace(str(repo), run_id="dirty-run", workspace_mode="in_place")
+    monkeypatch.setattr(wt_mod, "ensure_pub_dependencies", lambda *_a, **_k: {"passed": True})
+    info = prepare_workspace(str(repo), run_id="dirty-run", workspace_mode="in_place")
+
+    assert info["workspace_mode"] == "in_place"
+    # The uncommitted change is preserved (not reset/stashed away).
+    assert (repo / "README.md").read_text(encoding="utf-8") == "# test (work in progress)"
 
 
 def test_merge_rejects_in_place_workspace():

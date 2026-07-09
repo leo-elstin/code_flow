@@ -9,6 +9,7 @@ from app.services.run_activity import append_activity
 from app.core.config import settings
 from app.tools.dart_tools import (
     check_di_registrations,
+    dart_source_signature,
     ensure_pub_dependencies,
     is_generated_dart_path,
     maybe_run_build_runner,
@@ -71,6 +72,7 @@ def compare_to_plan(
     file_changes: list[dict[str, Any]] | None = None,
     project_path: str | None = None,
     run_id: str | None = None,
+    prior_build_runner: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     issues: list[dict[str, Any]] = []
     required_fixes: list[str] = []
@@ -152,28 +154,57 @@ def compare_to_plan(
             )
             required_fixes.append(msg)
         else:
-            build_runner = maybe_run_build_runner(worktree_path, dart_targets)
-            if run_id and not build_runner.get("skipped"):
-                append_activity(
-                    run_id,
-                    type="tool",
-                    phase="verifier",
-                    title="build_runner"
-                    if build_runner.get("passed")
-                    else "build_runner failed",
-                    files=dart_targets,
-                    meta={"tool": "build_runner", "passed": build_runner.get("passed")},
+            # Reuse the dev node's build_runner result when its Dart source inputs are
+            # unchanged since — build_runner then runs at most once per dev→verify
+            # cycle (it costs 2-3 min). The dev run already staged the generated files.
+            reuse_signature = ""
+            if prior_build_runner and prior_build_runner.get("passed"):
+                reuse_signature = prior_build_runner.get("signature") or ""
+            current_signature = (
+                dart_source_signature(
+                    worktree_path, [p for p in changed if p.endswith(".dart")]
                 )
-            if build_runner.get("passed") and not build_runner.get("skipped"):
-                generated = [
-                    path
-                    for path in list_changed_files(worktree_path)
-                    if is_generated_dart_path(path)
-                ]
-                if generated:
-                    stage_files(worktree_path, generated)
-                    changed = set(list_changed_files(worktree_path)) | changed_dev
-                    dart_targets = _analyze_targets(changed, worktree_path, dev_targets)
+                if reuse_signature
+                else ""
+            )
+            if reuse_signature and reuse_signature == current_signature:
+                build_runner = {
+                    "passed": True,
+                    "skipped": True,
+                    "reused": True,
+                    "targets": dart_targets,
+                }
+                if run_id:
+                    append_activity(
+                        run_id,
+                        type="tool",
+                        phase="verifier",
+                        title="build_runner reused (unchanged since dev)",
+                        meta={"tool": "build_runner", "passed": True, "reused": True},
+                    )
+            else:
+                build_runner = maybe_run_build_runner(worktree_path, dart_targets)
+                if run_id and not build_runner.get("skipped"):
+                    append_activity(
+                        run_id,
+                        type="tool",
+                        phase="verifier",
+                        title="build_runner"
+                        if build_runner.get("passed")
+                        else "build_runner failed",
+                        files=dart_targets,
+                        meta={"tool": "build_runner", "passed": build_runner.get("passed")},
+                    )
+                if build_runner.get("passed") and not build_runner.get("skipped"):
+                    generated = [
+                        path
+                        for path in list_changed_files(worktree_path)
+                        if is_generated_dart_path(path)
+                    ]
+                    if generated:
+                        stage_files(worktree_path, generated)
+                        changed = set(list_changed_files(worktree_path)) | changed_dev
+                        dart_targets = _analyze_targets(changed, worktree_path, dev_targets)
             if not build_runner.get("passed"):
                 msg = "build_runner failed"
                 issues.append(
@@ -372,6 +403,7 @@ async def run_verifier(
     file_changes: list[dict[str, Any]],
     project_path: str | None = None,
     run_id: str | None = None,
+    prior_build_runner: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     logger.info(
         "Verifier starting worktree=%s dev_targets=%s",
@@ -395,6 +427,7 @@ async def run_verifier(
             file_changes,
             project_path=project_path,
             run_id=run_id,
+            prior_build_runner=prior_build_runner,
         )
         diffs = await asyncio.to_thread(get_all_diffs, worktree_path)
 

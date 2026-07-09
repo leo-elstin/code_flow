@@ -43,6 +43,15 @@ class FeatureRunState(TypedDict, total=False):
     verifier_report: dict[str, Any]
     qa_report: dict[str, Any]
     messages: Annotated[list[dict[str, Any]], operator.add]
+    # Dev loop's internal tool-calling conversation, carried across iterations so a
+    # retry / step-limit continuation resumes from prior context instead of
+    # re-discovering the codebase. Replace semantics (last write wins), NOT append —
+    # this is distinct from `messages` (the append-only UI activity log).
+    dev_messages: list[dict[str, Any]]
+    # Result of the build_runner pass the dev node ran at finalize: {passed, signature}.
+    # The verifier reuses it (skips its own build_runner) when the source signature is
+    # unchanged, so build_runner runs at most once per dev→verify cycle.
+    dev_build_runner: dict[str, Any]
     error: str | None
     approved: bool
     rejected: bool

@@ -264,7 +264,7 @@ export default function EpicRunPanel({ ticket, tickets, projectId, jiraBaseUrl, 
                 {epicRun.plan.levels.map((level, i) => (
                   <div key={i} className="flex items-start gap-2">
                     <span className="mt-1 text-[10px] font-bold text-slate-400 w-12 flex-shrink-0">L{i + 1}</span>
-                    <div className="flex flex-wrap gap-1.5">
+                    <div className="flex flex-wrap gap-1.5 min-w-0">
                       {level.map((tid) => {
                         const dc = displayChildren.find((c) => c.ticket_id === tid);
                         return (

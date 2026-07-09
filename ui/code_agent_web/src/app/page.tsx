@@ -736,9 +736,13 @@ export default function Home() {
               }}
             />
 
-            {/* Sliding drawer — overlays from the right */}
+            {/* Sliding drawer — overlays from the right. Epics get a wider 60vw
+                panel (dependency levels + long status text need the room); the
+                per-ticket run view keeps the narrower fixed width. */}
             <div
-              className={`absolute inset-y-0 right-0 z-20 w-[620px] max-w-[85vw] bg-white border-l border-slate-200/80 shadow-2xl overflow-hidden flex flex-col transition-transform duration-300 ease-in-out ${
+              className={`absolute inset-y-0 right-0 z-20 ${
+                selectedIsEpic ? 'w-[60vw] min-w-[640px]' : 'w-[620px] max-w-[85vw]'
+              } bg-white border-l border-slate-200/80 shadow-2xl overflow-hidden flex flex-col transition-transform duration-300 ease-in-out ${
                 selectedTicket ? 'translate-x-0' : 'translate-x-full pointer-events-none'
               }`}
             >

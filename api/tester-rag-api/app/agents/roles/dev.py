@@ -9,7 +9,12 @@ from app.core.config import settings
 from app.core.logging_config import get_logger
 from app.services.generation import acompletion
 from app.services.run_activity import append_activity
-from app.tools.dart_tools import is_generated_dart_path, maybe_run_build_runner, run_dart_analyze
+from app.tools.dart_tools import (
+    dart_source_signature,
+    is_generated_dart_path,
+    maybe_run_build_runner,
+    run_dart_analyze,
+)
 from app.tools.filesystem import write_file, roll_back_file
 from app.tools.edit_file import edit_file, EditFileError
 from app.tools.safe_shell import run_safe_command
@@ -28,9 +33,10 @@ you created and modified — do not call any more tools.
 
 Rules:
 - Avoid overwriting entire files using "write_file" for small changes. Use "edit_file" instead to perform precise modifications.
-- HOWEVER, if a file becomes severely corrupted (e.g., edit_file keeps failing because the code is duplicated or mangled), you SHOULD use "write_file" to rewrite the entire file with the correct content.
-- Ensure "target_content" in "edit_file" matches exactly one occurrence in the file.
-- Verify your code compiles with the "analyze_changed_files" tool after each meaningful change.
+- BATCH your work: when you already know several edits you need to make (across one or more files), issue them together in a SINGLE "apply_edits" call instead of one "edit_file" call per turn. This is much faster. Only fall back to a single "edit_file" when an edit depends on the result of a previous one.
+- HOWEVER, if a file becomes severely corrupted (e.g., edits keep failing because the code is duplicated or mangled), you SHOULD use "write_file" to rewrite the entire file with the correct content.
+- Ensure "target_content" matches a block in the file. Whitespace differences (trailing spaces, indentation) are tolerated, but the block must be unique unless you pass allow_multiple.
+- Verify your code compiles with the "analyze_changed_files" tool after a batch of changes — you do NOT need to analyze after every single edit.
 - If compile errors are found, fix them iteratively or rollback files to undo mistakes using "roll_back_file".
 
 CRITICAL — Scope discipline (ENFORCED: the tool layer rejects out-of-scope writes/edits and blocked commands):
@@ -136,10 +142,16 @@ def _build_iteration_brief(
     allowed_paths: set[str],
     required_fixes: list[str],
     analyze_errors: list[str],
+    continuing: bool = False,
 ) -> str:
     """Task brief for the dev loop. First iteration: implement. Retry iterations:
-    FIX MODE — current planned-file contents plus an explicit fix checklist, so the
-    agent patches the existing implementation instead of rewriting from scratch."""
+    FIX MODE — an explicit fix checklist so the agent patches the existing
+    implementation instead of rewriting from scratch.
+
+    When *continuing* (the prior iteration's conversation is being carried forward),
+    the agent already has its earlier reads in context, so we skip re-injecting the
+    planned-file bodies and just hand it the checklist — it can read_file_tool any
+    file it needs to re-check current on-disk state."""
     if not required_fixes and not analyze_errors:
         return (
             "Begin implementation. Analyze your options, call tools, and verify "
@@ -148,7 +160,7 @@ def _build_iteration_brief(
 
     lines = [
         "FIX MODE — the implementation from the previous iteration ALREADY EXISTS in the worktree.",
-        "Do NOT rewrite files from scratch. Apply ONLY the fixes below using edit_file.",
+        "Do NOT rewrite files from scratch. Apply ONLY the fixes below (batch them with apply_edits).",
         "",
         "Required fixes:",
     ]
@@ -157,6 +169,16 @@ def _build_iteration_brief(
         lines.append("")
         lines.append("Analyzer errors (verbatim):")
         lines.extend(f"- {line}" for line in analyze_errors[:25])
+
+    if continuing:
+        lines.append("")
+        lines.append(
+            "You already have the earlier context from this session. Re-read a file "
+            "with read_file_tool only if you need to confirm its current on-disk state, "
+            "then apply the fixes and run analyze_changed_files. When every fix is "
+            "applied and analyze passes for your files, respond with a plain-text summary."
+        )
+        return "\n".join(lines)
 
     existing = [
         rel
@@ -385,16 +407,42 @@ def _execute_dev_tool(
         return f"Error executing tool {action}: {exc}", []
 
 
+_DEV_MSG_KEEP_RECENT_TOOLS = 12
+_DEV_MSG_STUB_LEN = 400
+
+
+def _trim_dev_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Shrink the carried conversation without breaking tool_call/tool_result pairing.
+
+    Every message is kept (so each assistant tool_call keeps its matching tool result,
+    which the API requires), but the *content* of all but the most recent tool results
+    is stubbed. That preserves the agent's reasoning and recent evidence while shedding
+    the bulk of old file dumps, so carrying context across iterations stays bounded."""
+    tool_positions = [i for i, m in enumerate(messages) if m.get("role") == "tool"]
+    if len(tool_positions) <= _DEV_MSG_KEEP_RECENT_TOOLS:
+        return messages
+    stale = set(tool_positions[:-_DEV_MSG_KEEP_RECENT_TOOLS])
+    trimmed: list[dict[str, Any]] = []
+    for i, msg in enumerate(messages):
+        content = msg.get("content")
+        if i in stale and isinstance(content, str) and len(content) > _DEV_MSG_STUB_LEN:
+            msg = {**msg, "content": content[:_DEV_MSG_STUB_LEN] + "\n...[older tool output trimmed]"}
+        trimmed.append(msg)
+    return trimmed
+
+
 def _finalize_dev_changes(
     worktree_path: str, plan: dict[str, Any]
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """Stage changed files and optionally run build_runner. Blocking git/subprocess
-    work — invoked via asyncio.to_thread. Returns (file_changes, build_runner)."""
+    work — invoked via asyncio.to_thread. Returns (file_changes, build_runner). The
+    build_runner dict carries a `signature` over its Dart source inputs so the verifier
+    can skip re-running it when nothing changed since."""
     changed_files = list_changed_files(worktree_path)
     file_changes: list[dict[str, Any]] = []
 
     if not changed_files:
-        return file_changes, {"passed": True, "skipped": True, "targets": []}
+        return file_changes, {"passed": True, "skipped": True, "targets": [], "signature": ""}
 
     stage_files(worktree_path, changed_files)
     dart_paths = [path for path in changed_files if path.endswith(".dart")]
@@ -405,6 +453,9 @@ def _finalize_dev_changes(
         ]
         if generated:
             stage_files(worktree_path, generated)
+    # Signature over the (non-generated) Dart inputs so the verifier can reuse this
+    # build_runner result instead of running it a second time.
+    build_runner["signature"] = dart_source_signature(worktree_path, dart_paths)
 
     create_paths = [f.get("path") for f in plan.get("files_to_create", [])]
     for path in changed_files:
@@ -426,7 +477,12 @@ async def run_dev(
     project_path: str,
     verifier_report: dict[str, Any] | None = None,
     run_id: str | None = None,
+    prior_messages: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
+    # When prior_messages is supplied (a retry / step-limit continuation), the dev
+    # loop resumes that conversation instead of rebuilding the system prompt and
+    # re-running discovery — the earlier reads and reasoning are already in context.
+    continuing = bool(prior_messages)
     logger.info("Dev starting worktree=%s using tiered model=%s", worktree_path, settings.CODE_AGENT_DEV_MODEL)
     if run_id:
         append_activity(
@@ -469,7 +525,7 @@ async def run_dev(
     # current file contents + an explicit fix checklist (no rewrite-from-scratch) ---
     required_fixes, analyze_errors = _collect_required_fixes(verifier_report)
     brief = _build_iteration_brief(
-        worktree_path, allowed_paths, required_fixes, analyze_errors
+        worktree_path, allowed_paths, required_fixes, analyze_errors, continuing=continuing
     )
     if run_id and (required_fixes or analyze_errors):
         append_activity(
@@ -507,6 +563,12 @@ async def run_dev(
     dev_model = settings.CODE_AGENT_DEV_MODEL
     logger.info("Dev starting native tool-calling loop model=%s", dev_model)
 
+    # Per-run baseline store so edits can be undone to the run's start state
+    # (not HEAD), preserving pre-existing uncommitted work in in-place runs.
+    baseline_dir = (
+        os.path.join(settings.CODE_AGENT_DATA_DIR, "baselines", run_id) if run_id else None
+    )
+
     # Build tools pre-bound to this run's worktree + plan scope
     tool_functions, tool_schemas = make_dev_tools(
         worktree_path=worktree_path,
@@ -514,22 +576,38 @@ async def run_dev(
         analyze_targets=analyze_targets,
         allow_flutter_test=allow_flutter_test,
         planned_test_files=planned_test_files,
+        baseline_dir=baseline_dir,
     )
 
-    messages: list[dict[str, Any]] = [
-        {"role": "system", "content": DEV_SYSTEM_LOOP},
-        {
-            "role": "user",
-            "content": (
-                f"Approved plan:\n{json.dumps(plan, indent=2)}\n\n"
-                + (f"{project_guide_text}\n\n" if project_guide_text else "")
-                + project_context_text
-                + dev_skills_text
-                + (f"SDK references (auto-looked-up for deprecated APIs in feedback):\n{sdk_hints}\n\n" if sdk_hints else "")
-                + brief
-            ),
-        },
-    ]
+    if continuing:
+        # Resume the carried conversation: keep it bounded, then append only the new
+        # fix brief as a fresh user turn. The plan/guide/skills already live in the
+        # first user message of prior_messages, so we don't repeat them.
+        messages = _trim_dev_messages(list(prior_messages))
+        messages.append(
+            {
+                "role": "user",
+                "content": (
+                    (f"SDK references (auto-looked-up for deprecated APIs in feedback):\n{sdk_hints}\n\n" if sdk_hints else "")
+                    + brief
+                ),
+            }
+        )
+    else:
+        messages = [
+            {"role": "system", "content": DEV_SYSTEM_LOOP},
+            {
+                "role": "user",
+                "content": (
+                    f"Approved plan:\n{json.dumps(plan, indent=2)}\n\n"
+                    + (f"{project_guide_text}\n\n" if project_guide_text else "")
+                    + project_context_text
+                    + dev_skills_text
+                    + (f"SDK references (auto-looked-up for deprecated APIs in feedback):\n{sdk_hints}\n\n" if sdk_hints else "")
+                    + brief
+                ),
+            },
+        ]
 
     dev_summary = "Development finished."
     truncated = False
@@ -635,4 +713,13 @@ async def run_dev(
         "build_runner": build_runner,
         "synced_from_project": synced,
         "messages": [{"role": "dev", "content": dev_summary}],
+        # Full tool-calling conversation (trimmed) so the next iteration can resume
+        # from here instead of restarting discovery.
+        "dev_messages": _trim_dev_messages(messages),
+        # {passed, signature} so the verifier can skip a redundant build_runner run.
+        "dev_build_runner": {
+            "passed": bool(build_runner.get("passed", True)),
+            "skipped": bool(build_runner.get("skipped", False)),
+            "signature": build_runner.get("signature", ""),
+        },
     }
