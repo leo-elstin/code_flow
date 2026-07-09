@@ -109,6 +109,7 @@ async def dev_node(state: FeatureRunState) -> dict:
             project_path=state["project_path"],
             verifier_report=state.get("verifier_report") or None,
             run_id=run_id or None,
+            prior_messages=state.get("dev_messages") or None,
         )
         logger.info(
             "Dev success run_id=%s file_changes=%d",
@@ -120,6 +121,8 @@ async def dev_node(state: FeatureRunState) -> dict:
             "file_changes": result.get("file_changes", []),
             "truncated": result.get("truncated", False),
             "messages": result.get("messages", []),
+            "dev_messages": result.get("dev_messages", []),
+            "dev_build_runner": result.get("dev_build_runner", {}),
         }
     except Exception:
         logger.exception("Dev error run_id=%s", run_id)
@@ -157,6 +160,7 @@ async def verifier_node(state: FeatureRunState) -> dict:
             file_changes=state.get("file_changes", []),
             project_path=state.get("project_path"),
             run_id=run_id or None,
+            prior_build_runner=state.get("dev_build_runner") or None,
         )
         report = result["verifier_report"]
 

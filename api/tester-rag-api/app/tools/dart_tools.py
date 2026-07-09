@@ -168,6 +168,32 @@ def maybe_run_build_runner(worktree_path: str, dart_paths: list[str]) -> dict:
     return result
 
 
+def dart_source_signature(worktree_path: str, dart_paths: list[str]) -> str:
+    """Content hash of the non-generated Dart source files in *dart_paths*.
+
+    Used to tell whether build_runner's inputs changed between the dev finalize and
+    the verifier: if the signature is unchanged, the verifier can reuse the dev run's
+    result instead of re-running build_runner (2-3 min saved per cycle). Generated
+    outputs (*.g.dart, *.freezed.dart, …) are excluded because build_runner rewrites
+    them, which would otherwise make every signature differ from itself."""
+    import hashlib
+
+    digest = hashlib.sha256()
+    for rel in sorted(set(dart_paths)):
+        if not rel.endswith(".dart") or is_generated_dart_path(rel):
+            continue
+        abs_path = os.path.join(worktree_path, rel)
+        try:
+            with open(abs_path, "rb") as handle:
+                data = handle.read()
+        except OSError:
+            data = b""
+        digest.update(rel.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(hashlib.sha256(data).digest())
+    return digest.hexdigest()
+
+
 def is_generated_dart_path(path: str) -> bool:
     return path.endswith(_GENERATED_SUFFIXES)
 

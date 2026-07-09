@@ -20,6 +20,7 @@ from app.services.run_index import list_executions as list_indexed_executions
 from app.services.run_index import list_runs as list_indexed_runs
 from app.services.run_index import sync_missing_from_checkpoints, upsert_run
 from app.services.worktree import WorktreeError, prepare_workspace
+from app.tools.filesystem import restore_all_baselines
 
 logger = get_logger("runner")
 
@@ -575,15 +576,39 @@ class CodeAgentRunner:
             await self.get_state(run_id)
             self._reap_tasks(exclude=run_id)
 
-    def _revert_worktree_edits(self, worktree_path: str) -> None:
-        """Undo only the uncommitted changes the previous execution made in the
-        worktree, returning the tree to its baseline (the dev loop stages but
-        never commits, so reset --hard + clean restores base). The worktree
-        itself is preserved so the next execution reuses it."""
+    def _revert_worktree_edits(
+        self,
+        worktree_path: str,
+        *,
+        run_id: str | None = None,
+        workspace_mode: str = "worktree",
+    ) -> None:
+        """Undo the previous execution's edits so the next attempt starts clean.
+
+        In-place runs edit the user's real checkout, so a blanket reset/clean
+        would destroy their uncommitted work. There we restore only the files
+        the agent touched from the per-run baseline snapshots, leaving every
+        other change alone. Worktree runs are isolated, so the original
+        reset --hard + clean is safe and faster."""
         import subprocess
 
         if not worktree_path or not os.path.exists(worktree_path):
             return
+
+        if workspace_mode == "in_place":
+            baseline_dir = (
+                os.path.join(settings.CODE_AGENT_DATA_DIR, "baselines", run_id)
+                if run_id
+                else None
+            )
+            if baseline_dir:
+                restored = restore_all_baselines(baseline_dir, worktree_path)
+                logger.info(
+                    "Reverted in-place run %s via %d baseline snapshot(s)",
+                    run_id, len(restored),
+                )
+            return
+
         subprocess.run(
             ["git", "-C", worktree_path, "reset", "--hard", "HEAD"],
             capture_output=True,
@@ -647,7 +672,12 @@ class CodeAgentRunner:
         worktree_path = current.get("worktree_path")
         if worktree_path:
             # Reuse the current tree, reverting only the previous run's changes.
-            await asyncio.to_thread(self._revert_worktree_edits, worktree_path)
+            await asyncio.to_thread(
+                self._revert_worktree_edits,
+                worktree_path,
+                run_id=run_id,
+                workspace_mode=current.get("workspace_mode") or "worktree",
+            )
 
             seed: FeatureRunState = initial_state(
                 new_run_id, current["user_request"], current["project_path"]

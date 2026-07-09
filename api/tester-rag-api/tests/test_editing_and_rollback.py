@@ -39,6 +39,47 @@ def test_surgical_edit_ambiguous(tmp_path):
     with pytest.raises(EditFileError, match="found 2 times"):
         edit_file(str(tmp_path), "lib_test.dart", "print('hello');", "print('world');")
 
+def test_edit_tolerates_trailing_whitespace(tmp_path):
+    # File has trailing spaces the model won't reproduce in target_content.
+    file_path = tmp_path / "lib_test.dart"
+    file_path.write_text("class A {\n  void foo() {  \n    print('hi');\n  }\n}\n", encoding="utf-8")
+
+    edit_file(
+        str(tmp_path),
+        "lib_test.dart",
+        "  void foo() {\n    print('hi');\n  }",  # no trailing spaces
+        "  void foo() {\n    print('bye');\n  }",
+    )
+    result = file_path.read_text(encoding="utf-8")
+    assert "print('bye');" in result
+    assert "print('hi');" not in result
+
+
+def test_edit_tolerates_indentation_drift(tmp_path):
+    # Model supplies the block un-indented; tier 3 (full strip) recovers it.
+    file_path = tmp_path / "lib_test.dart"
+    file_path.write_text("class A {\n      final int x = 1;\n}\n", encoding="utf-8")
+
+    edit_file(
+        str(tmp_path),
+        "lib_test.dart",
+        "final int x = 1;",
+        "  final int x = 2;",
+    )
+    result = file_path.read_text(encoding="utf-8")
+    assert "final int x = 2;" in result
+    assert "x = 1" not in result
+
+
+def test_edit_tolerant_ambiguous_raises(tmp_path):
+    file_path = tmp_path / "lib_test.dart"
+    # Two indented copies of the block. The un-indented target is NOT an exact
+    # substring (so Tier 1 misses), but matches both under full-strip tolerance.
+    file_path.write_text("  a();\n  b();\n    a();\n    b();\n", encoding="utf-8")
+    with pytest.raises(EditFileError, match="whitespace-tolerant"):
+        edit_file(str(tmp_path), "lib_test.dart", "a();\nb();", "c();")
+
+
 def test_rollback_file(tmp_path):
     # Initialize a temporary git repository
     subprocess.run(["git", "init"], cwd=tmp_path, capture_output=True)
