@@ -14,7 +14,7 @@ from app.core.logging_config import get_logger
 from app.tools.dart_tools import run_dart_analyze
 from app.tools.docs_tool import lookup_sdk_symbol
 from app.tools.edit_file import EditFileError, edit_file
-from app.tools.filesystem import roll_back_file, write_file
+from app.tools.filesystem import roll_back_file, snapshot_baseline, write_file
 from app.tools.grep import grep_codebase, read_file
 from app.tools.safe_shell import run_safe_command
 
@@ -160,6 +160,44 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": "apply_edits_tool",
+            "description": (
+                "Apply MANY surgical edits in ONE call — strongly preferred over calling "
+                "edit_file_tool repeatedly. Each edit targets a file and replaces an exact "
+                "block (whitespace-tolerant). Edits may span multiple files and are applied "
+                "in order; if one fails the rest still apply and you get a per-edit report, "
+                "so batch every independent change you know you need instead of one per turn."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "edits": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "path": {"type": "string"},
+                                "target_content": {
+                                    "type": "string",
+                                    "description": "Exact code block to find",
+                                },
+                                "replacement_content": {
+                                    "type": "string",
+                                    "description": "Replacement code",
+                                },
+                                "allow_multiple": {"type": "boolean", "default": False},
+                            },
+                            "required": ["path", "target_content", "replacement_content"],
+                        },
+                    },
+                },
+                "required": ["edits"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "roll_back_file_tool",
             "description": "Discard any local uncommitted edits to a specific file, restoring it to HEAD.",
             "parameters": {
@@ -168,20 +206,6 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
                     "path": {"type": "string"},
                 },
                 "required": ["path"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "list_files_tool",
-            "description": "List the contents of a directory to understand project structure.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "directory": {"type": "string", "default": "lib"},
-                },
-                "required": [],
             },
         },
     },
@@ -265,6 +289,7 @@ def make_dev_tools(
     analyze_targets: list[str],
     allow_flutter_test: bool,
     planned_test_files: list[str],
+    baseline_dir: str | None = None,
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     """Return (functions_dict, openai_schemas) pre-bound to this run's worktree and plan scope.
 
@@ -298,6 +323,7 @@ def make_dev_tools(
                 "only pass overwrite=true if the file is corrupted beyond repair."
             )
         try:
+            snapshot_baseline(baseline_dir, worktree_path, path)
             write_file(worktree_path, path, content)
             return f"Successfully wrote file to {path}."
         except Exception as exc:
@@ -313,6 +339,7 @@ def make_dev_tools(
         if blocked:
             return blocked
         try:
+            snapshot_baseline(baseline_dir, worktree_path, path)
             edit_file(worktree_path, path, target_content, replacement_content, allow_multiple=allow_multiple)
             return f"Successfully replaced content in {path}."
         except EditFileError as exc:
@@ -320,21 +347,44 @@ def make_dev_tools(
         except Exception as exc:
             return f"Error editing file {path}: {exc}"
 
+    def apply_edits_tool(edits: list[dict[str, Any]]) -> str:
+        if not edits:
+            return "No edits provided."
+        results: list[str] = []
+        ok = 0
+        for idx, spec in enumerate(edits, 1):
+            path = spec.get("path", "")
+            blocked = _scope_error(path)
+            if blocked:
+                results.append(f"[{idx}] {path}: {blocked}")
+                continue
+            try:
+                snapshot_baseline(baseline_dir, worktree_path, path)
+                edit_file(
+                    worktree_path,
+                    path,
+                    spec.get("target_content", ""),
+                    spec.get("replacement_content", ""),
+                    allow_multiple=spec.get("allow_multiple", False),
+                )
+                ok += 1
+                results.append(f"[{idx}] {path}: OK")
+            except EditFileError as exc:
+                results.append(f"[{idx}] {path}: Edit failed: {exc}")
+            except Exception as exc:
+                results.append(f"[{idx}] {path}: Error: {exc}")
+        header = f"Applied {ok}/{len(edits)} edit(s)."
+        return header + "\n" + "\n".join(results)
+
     def roll_back_file_tool(path: str) -> str:
         blocked = _scope_error(path)
         if blocked:
             return blocked
         try:
-            roll_back_file(worktree_path, path)
+            roll_back_file(worktree_path, path, baseline_dir=baseline_dir)
             return f"Successfully rolled back uncommitted changes to {path}."
         except Exception as exc:
             return f"Error rolling back {path}: {exc}"
-
-    def list_files_tool(directory: str = "lib") -> str:
-        abs_dir = os.path.join(worktree_path, directory)
-        if os.path.exists(abs_dir):
-            return json.dumps(os.listdir(abs_dir))
-        return f"Directory not found: {directory}"
 
     def search_codebase_tool(query: str) -> str:
         try:
@@ -377,8 +427,8 @@ def make_dev_tools(
         "read_file_tool": read_file_tool,
         "write_file_tool": write_file_tool,
         "edit_file_tool": edit_file_tool,
+        "apply_edits_tool": apply_edits_tool,
         "roll_back_file_tool": roll_back_file_tool,
-        "list_files_tool": list_files_tool,
         "search_codebase_tool": search_codebase_tool,
         "lookup_sdk_symbol_tool": lookup_sdk_symbol_tool,
         "analyze_changed_files_tool": analyze_changed_files_tool,

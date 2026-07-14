@@ -8,6 +8,8 @@ from app.services.generation import chat_completion_json
 from app.services.run_activity import append_activity
 from app.core.config import settings
 from app.tools.dart_tools import (
+    check_di_registrations,
+    dart_source_signature,
     ensure_pub_dependencies,
     is_generated_dart_path,
     maybe_run_build_runner,
@@ -70,6 +72,7 @@ def compare_to_plan(
     file_changes: list[dict[str, Any]] | None = None,
     project_path: str | None = None,
     run_id: str | None = None,
+    prior_build_runner: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     issues: list[dict[str, Any]] = []
     required_fixes: list[str] = []
@@ -151,28 +154,57 @@ def compare_to_plan(
             )
             required_fixes.append(msg)
         else:
-            build_runner = maybe_run_build_runner(worktree_path, dart_targets)
-            if run_id and not build_runner.get("skipped"):
-                append_activity(
-                    run_id,
-                    type="tool",
-                    phase="verifier",
-                    title="build_runner"
-                    if build_runner.get("passed")
-                    else "build_runner failed",
-                    files=dart_targets,
-                    meta={"tool": "build_runner", "passed": build_runner.get("passed")},
+            # Reuse the dev node's build_runner result when its Dart source inputs are
+            # unchanged since — build_runner then runs at most once per dev→verify
+            # cycle (it costs 2-3 min). The dev run already staged the generated files.
+            reuse_signature = ""
+            if prior_build_runner and prior_build_runner.get("passed"):
+                reuse_signature = prior_build_runner.get("signature") or ""
+            current_signature = (
+                dart_source_signature(
+                    worktree_path, [p for p in changed if p.endswith(".dart")]
                 )
-            if build_runner.get("passed") and not build_runner.get("skipped"):
-                generated = [
-                    path
-                    for path in list_changed_files(worktree_path)
-                    if is_generated_dart_path(path)
-                ]
-                if generated:
-                    stage_files(worktree_path, generated)
-                    changed = set(list_changed_files(worktree_path)) | changed_dev
-                    dart_targets = _analyze_targets(changed, worktree_path, dev_targets)
+                if reuse_signature
+                else ""
+            )
+            if reuse_signature and reuse_signature == current_signature:
+                build_runner = {
+                    "passed": True,
+                    "skipped": True,
+                    "reused": True,
+                    "targets": dart_targets,
+                }
+                if run_id:
+                    append_activity(
+                        run_id,
+                        type="tool",
+                        phase="verifier",
+                        title="build_runner reused (unchanged since dev)",
+                        meta={"tool": "build_runner", "passed": True, "reused": True},
+                    )
+            else:
+                build_runner = maybe_run_build_runner(worktree_path, dart_targets)
+                if run_id and not build_runner.get("skipped"):
+                    append_activity(
+                        run_id,
+                        type="tool",
+                        phase="verifier",
+                        title="build_runner"
+                        if build_runner.get("passed")
+                        else "build_runner failed",
+                        files=dart_targets,
+                        meta={"tool": "build_runner", "passed": build_runner.get("passed")},
+                    )
+                if build_runner.get("passed") and not build_runner.get("skipped"):
+                    generated = [
+                        path
+                        for path in list_changed_files(worktree_path)
+                        if is_generated_dart_path(path)
+                    ]
+                    if generated:
+                        stage_files(worktree_path, generated)
+                        changed = set(list_changed_files(worktree_path)) | changed_dev
+                        dart_targets = _analyze_targets(changed, worktree_path, dev_targets)
             if not build_runner.get("passed"):
                 msg = "build_runner failed"
                 issues.append(
@@ -184,6 +216,40 @@ def compare_to_plan(
                     }
                 )
                 required_fixes.append(msg)
+
+    # DI registration evidence. injectable/get_it registrations land in generated
+    # *.config.dart files that are usually gitignored, so they never show in the
+    # diff the LLM reviewer reads — which made it repeatedly hallucinate "DI
+    # integration is missing" even though build_runner had wired the service.
+    # Read the generated config from disk and surface hard evidence instead.
+    di_registrations = check_di_registrations(
+        worktree_path, _planned_paths(plan.get("files_to_create", []))
+    )
+    if di_registrations.get("checked") and build_runner.get("passed", True):
+        if run_id:
+            append_activity(
+                run_id,
+                type="tool",
+                phase="verifier",
+                title=(
+                    "DI registration verified"
+                    if not di_registrations.get("missing")
+                    else "DI registration missing"
+                ),
+                files=sorted(di_registrations.get("registered", {}).values()),
+                meta={
+                    "tool": "di_check",
+                    "registered": list(di_registrations.get("registered", {})),
+                    "missing": di_registrations.get("missing", []),
+                },
+            )
+        for cls in di_registrations.get("missing", []):
+            msg = (
+                f"{cls} is annotated injectable but is not registered in any generated "
+                "*.config.dart — run build_runner so it joins the runtime DI graph"
+            )
+            issues.append({"severity": "blocker", "file": None, "reason": msg})
+            required_fixes.append(msg)
 
     analyze: dict[str, Any] = {"passed": True, "skipped": True, "targets": dart_targets}
     if dart_targets and pub_get.get("passed", True) and build_runner.get("passed", True):
@@ -282,9 +348,50 @@ def compare_to_plan(
         "build_runner": build_runner,
         "analyze": analyze,
         "test_results": test_results,
+        "di_registrations": di_registrations,
         "changed_files": sorted(changed),
         "synced_from_project": synced_from_project,
         "dev_targets": sorted(dev_targets),
+    }
+
+
+_MAX_DIFF_FILES = 20
+_MAX_DIFF_CHARS = 6_000
+_FAILED_OUTPUT_TAIL = 1_500
+
+
+def _build_llm_payload(
+    plan: dict[str, Any],
+    acceptance_criteria: list[str],
+    file_changes: list[dict[str, Any]],
+    diffs: list[dict[str, Any]],
+    gate: dict[str, Any],
+) -> dict[str, Any]:
+    """Trim the LLM-review payload: subprocess stdout/stderr adds no review
+    signal once the gate passed (error_lines already carry analyzer findings),
+    and only failed test output is worth showing. Diffs are capped per file."""
+    gate_summary = dict(gate)
+    for key in ("pub_get", "build_runner", "test_results"):
+        section = gate_summary.get(key)
+        if not isinstance(section, dict):
+            continue
+        section = dict(section)
+        keep_tail = key == "test_results" and not section.get("passed", True)
+        for stream in ("stdout", "stderr"):
+            value = section.get(stream)
+            if not value:
+                continue
+            section[stream] = value[-_FAILED_OUTPUT_TAIL:] if keep_tail else ""
+        gate_summary[key] = section
+    return {
+        "plan": plan,
+        "acceptance_criteria": acceptance_criteria,
+        "file_changes": file_changes,
+        "diffs": [
+            {"path": d.get("path"), "diff": (d.get("diff") or "")[:_MAX_DIFF_CHARS]}
+            for d in diffs[:_MAX_DIFF_FILES]
+        ],
+        "deterministic_gate": gate_summary,
     }
 
 
@@ -296,6 +403,7 @@ async def run_verifier(
     file_changes: list[dict[str, Any]],
     project_path: str | None = None,
     run_id: str | None = None,
+    prior_build_runner: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     logger.info(
         "Verifier starting worktree=%s dev_targets=%s",
@@ -319,6 +427,7 @@ async def run_verifier(
             file_changes,
             project_path=project_path,
             run_id=run_id,
+            prior_build_runner=prior_build_runner,
         )
         diffs = await asyncio.to_thread(get_all_diffs, worktree_path)
 
@@ -338,6 +447,28 @@ async def run_verifier(
                 "messages": [{"role": "verifier", "content": "Deterministic gates failed."}],
             }
 
+        threshold = settings.CODE_AGENT_VERIFIER_SKIP_LLM_TRIVIAL_CHARS
+        if (
+            threshold > 0
+            and not (plan.get("files_to_create") or [])
+            and sum(len(d.get("diff") or "") for d in diffs) <= threshold
+        ):
+            # Trivial modify-only change with all deterministic checks green —
+            # the LLM review adds little; opt-in fast path.
+            logger.info("Verifier passed (gate only; LLM review skipped, trivial diff)")
+            report = {
+                "passed": True,
+                "issues": [],
+                "required_fixes": [],
+                "deterministic_gate": gate,
+                "llm_review": "skipped_trivial",
+            }
+            return {
+                "verifier_report": report,
+                "diffs": diffs,
+                "messages": [{"role": "verifier", "content": "Verification passed."}],
+            }
+
         llm_report, _usage = await chat_completion_json(
             messages=[
                 {
@@ -346,19 +477,26 @@ async def run_verifier(
                         "You verify a Flutter feature implementation against a plan. "
                         "Deterministic checks already passed. "
                         "Return JSON: {passed: bool, issues: [], required_fixes: [], reasoning: string optional}. "
-                        "Set passed=true unless a planned acceptance criterion is clearly unmet."
+                        "Set passed=true unless a planned acceptance criterion is clearly unmet.\n"
+                        "IMPORTANT — generated code is invisible in diffs. Files matching "
+                        "*.config.dart, *.g.dart, *.freezed.dart, *.mocks.dart are build_runner "
+                        "output and are gitignored, so they will NOT appear in the diffs you are "
+                        "shown. Dependency-injection registrations (injectable/get_it) live in "
+                        "*.config.dart. Do NOT flag a service as 'not registered', 'missing DI "
+                        "wiring', or 'not resolvable through the app DI path' based on its absence "
+                        "from the diff. The field deterministic_gate.di_registrations is the source "
+                        "of truth: every class listed under its 'registered' map is confirmed wired "
+                        "into the runtime DI graph. Only raise a DI blocker for a class that appears "
+                        "in di_registrations.missing. A class carrying @injectable/@lazySingleton/"
+                        "@singleton needs no manual registration call — build_runner generates it."
                     ),
                 },
                 {
                     "role": "user",
                     "content": json.dumps(
-                        {
-                            "plan": plan,
-                            "acceptance_criteria": acceptance_criteria,
-                            "file_changes": file_changes,
-                            "diffs": diffs[:20],
-                            "deterministic_gate": gate,
-                        },
+                        _build_llm_payload(
+                            plan, acceptance_criteria, file_changes, diffs, gate
+                        ),
                         indent=2,
                     )[:120000],
                 },

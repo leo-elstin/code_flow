@@ -1,6 +1,8 @@
 import asyncio
 import os
+import re
 import sqlite3
+import subprocess
 import uuid
 from contextlib import asynccontextmanager
 from typing import Any, AsyncIterator, Awaitable, Callable
@@ -18,8 +20,103 @@ from app.services.run_index import list_executions as list_indexed_executions
 from app.services.run_index import list_runs as list_indexed_runs
 from app.services.run_index import sync_missing_from_checkpoints, upsert_run
 from app.services.worktree import WorktreeError, prepare_workspace
+from app.tools.filesystem import restore_all_baselines
 
 logger = get_logger("runner")
+
+_DART_PATH_RE = re.compile(r"(?:lib|test)/[\w/.-]+\.dart")
+
+# Keywords that indicate a DI registration file is needed but not named explicitly
+_DI_KEYWORDS_RE = re.compile(
+    r"inject(?:able|ion)|register(?:ed|ation)?|GetIt|dependency.inject|DI\b|"
+    r"singleton|@lazySingleton|@injectable|di\.register|sl\.register",
+    re.IGNORECASE,
+)
+
+# Grep patterns used to locate the DI setup file inside the project
+_DI_GREP_PATTERNS = (
+    r"registerFactory\|registerSingleton\|registerLazySingleton\|GetIt\.instance",
+)
+
+
+def _find_di_file(project_path: str) -> str | None:
+    """Grep the project for GetIt registration calls and return the first matching path."""
+    try:
+        result = subprocess.run(
+            ["grep", "-rl", "--include=*.dart", "-E",
+             r"registerFactory|registerSingleton|registerLazySingleton|GetIt\.instance",
+             os.path.join(project_path, "lib")],
+            capture_output=True, text=True, timeout=10,
+        )
+        for line in result.stdout.splitlines():
+            rel = os.path.relpath(line.strip(), project_path)
+            if rel.startswith("lib") and rel.endswith(".dart"):
+                return rel
+    except Exception:
+        pass
+    return None
+
+
+def _augment_plan_from_verifier(
+    plan: dict[str, Any],
+    verifier_report: dict[str, Any] | None,
+    project_path: str | None = None,
+) -> dict[str, Any]:
+    """Return a copy of *plan* with wiring files added to files_to_modify when
+    the verifier flagged them as missing.
+
+    Two strategies:
+    1. Explicit paths: dart paths in issues[].file or regex-matched from required_fixes text.
+    2. DI keyword detection: when the verifier mentions injectable/registration/GetIt
+       but names no file, grep the project to find the actual DI setup file.
+    """
+    if not verifier_report:
+        return plan
+
+    existing: set[str] = set()
+    for key in ("files_to_create", "files_to_modify"):
+        for item in plan.get(key, []) or []:
+            path = item.get("path") if isinstance(item, dict) else str(item)
+            if path:
+                existing.add(str(path).lstrip("/"))
+
+    found: set[str] = set()
+    all_text = " ".join(
+        [
+            str(issue.get("reason") or "") if isinstance(issue, dict) else str(issue)
+            for issue in (verifier_report.get("issues") or [])
+        ]
+        + [str(f) for f in (verifier_report.get("required_fixes") or [])]
+        + [verifier_report.get("headline") or ""]
+    )
+
+    # Strategy 1 — explicit dart paths in structured issues
+    for issue in verifier_report.get("issues") or []:
+        if isinstance(issue, dict) and issue.get("file"):
+            found.add(str(issue["file"]).lstrip("/"))
+
+    # Strategy 1b — dart paths embedded in required_fixes prose
+    for match in _DART_PATH_RE.findall(all_text):
+        found.add(match.lstrip("/"))
+
+    # Strategy 2 — DI keyword detection → grep for the actual registration file
+    if project_path and _DI_KEYWORDS_RE.search(all_text):
+        di_file = _find_di_file(project_path)
+        if di_file and di_file not in existing:
+            found.add(di_file)
+            logger.info("DI keyword detected in verifier report; found registration file: %s", di_file)
+
+    new_files = [p for p in sorted(found) if p and p not in existing]
+    if not new_files:
+        return plan
+
+    augmented = dict(plan)
+    augmented["files_to_modify"] = list(plan.get("files_to_modify") or []) + [
+        {"path": p, "reason": "Added by retry: verifier flagged this file as missing"}
+        for p in new_files
+    ]
+    logger.info("Augmented retry plan with %d file(s) from verifier report: %s", len(new_files), new_files)
+    return augmented
 
 
 def _enable_wal(db_path: str) -> None:
@@ -103,6 +200,22 @@ class CodeAgentRunner:
     def _task_running(self, run_id: str) -> bool:
         task = self._tasks.get(run_id)
         return task is not None and not task.done()
+
+    async def wait_for_task(self, run_id: str, timeout: float) -> None:
+        """Wait until the run's current in-process asyncio task finishes.
+
+        The per-run task ends exactly at the planner interrupt and again at a
+        terminal state, so callers (e.g. the epic runner) can await a phase
+        transition instead of polling. No-op when no task is registered — the
+        run may live in another process; callers must re-check state. The task
+        is shielded so a timeout here never cancels the run itself."""
+        task = self._tasks.get(run_id)
+        if task is None or task.done():
+            return
+        try:
+            await asyncio.wait_for(asyncio.shield(task), timeout=timeout)
+        except Exception:  # noqa: BLE001 — run errors surface via run state
+            pass
 
     async def _patch_state(self, run_id: str, patch: dict[str, Any]) -> FeatureRunState | None:
         async with self._checkpointer() as checkpointer:
@@ -189,7 +302,64 @@ class CodeAgentRunner:
             await self.get_state(run_id)
             self._reap_tasks(exclude=run_id)
 
-    async def start_run(self, user_request: str, project_path: str, ticket_id: int | None = None) -> str:
+    async def _enrich_referenced_tickets(
+        self,
+        run_id: str,
+        *,
+        own_key: str | None,
+        raw_description: str,
+        acceptance_criteria: list[str],
+        linked_issues_context: str | None,
+    ) -> str | None:
+        """Append auto-fetched bodies of Jira tickets named in the ticket text to
+        the linked-issues context. Runs the (blocking) Jira fetch off the event
+        loop and never fails the run — on any error the original context stands."""
+        try:
+            from app.services.jira_service import build_referenced_tickets_context
+
+            ref_text = "\n".join([raw_description, *acceptance_criteria])
+            referenced = await asyncio.to_thread(
+                build_referenced_tickets_context,
+                ref_text,
+                exclude={own_key} if own_key else set(),
+            )
+        except Exception as exc:  # noqa: BLE001 — enrichment is best-effort
+            logger.warning("Referenced-ticket enrichment failed for run %s: %s", run_id, exc)
+            return linked_issues_context
+
+        if not referenced:
+            return linked_issues_context
+        logger.info("Run %s enriched with referenced Jira ticket(s)", run_id)
+        existing = (linked_issues_context or "").strip()
+        return f"{existing}\n\n{referenced}".strip() if existing else referenced
+
+    async def _auto_approve_when_ready(self, run_id: str) -> None:
+        """Approve a single run's plan automatically once planning finishes.
+
+        Waits for the planning task to reach the interrupt, then approves if the
+        plan is ready. No-op if the planner asked clarification questions (the
+        user must answer those) or the run already moved on."""
+        try:
+            await self.wait_for_task(run_id, timeout=3600)
+        except Exception:  # noqa: BLE001
+            pass
+        state = await self.get_state(run_id)
+        if (state or {}).get("status") != "awaiting_approval":
+            return
+        try:
+            await self.approve_run(run_id, workspace_mode="worktree")
+            logger.info("Auto-approved run %s (plan ready)", run_id)
+        except Exception:  # noqa: BLE001
+            logger.warning("Auto-approve failed for run %s", run_id, exc_info=True)
+
+    async def start_run(
+        self,
+        user_request: str,
+        project_path: str,
+        ticket_id: int | None = None,
+        *,
+        auto_approve: bool | None = None,
+    ) -> str:
         run_id = str(uuid.uuid4())
         logger.info("Starting run run_id=%s project_path=%s", run_id, project_path)
         state = initial_state(run_id, user_request, project_path)
@@ -206,6 +376,17 @@ class CodeAgentRunner:
                     state["attachment_paths"] = jira_meta.get("attachment_paths", [])
                     state["linked_issues_context"] = jira_meta.get("linked_issues_context")
                     state["acceptance_criteria_hint"] = jira_meta.get("acceptance_criteria", [])
+                    # Pull in the bodies of any Jira tickets named in this
+                    # ticket's own text (rules often live in a referenced ticket
+                    # the planner can't otherwise see), so it need not ask.
+                    if settings.CODE_AGENT_RESOLVE_REFERENCED_TICKETS:
+                        state["linked_issues_context"] = await self._enrich_referenced_tickets(
+                            run_id,
+                            own_key=ticket_data.get("jira_key"),
+                            raw_description=jira_meta.get("raw_description") or "",
+                            acceptance_criteria=jira_meta.get("acceptance_criteria") or [],
+                            linked_issues_context=state.get("linked_issues_context"),
+                        )
                 except (ValueError, TypeError):
                     pass  # description is plain text, not Jira structured JSON
 
@@ -223,6 +404,10 @@ class CodeAgentRunner:
         task = asyncio.create_task(self._run_graph(run_id, _invoke))
         self._tasks[run_id] = task
         logger.info("Run started run_id=%s status=planning", run_id)
+
+        auto = settings.CODE_AGENT_AUTO_APPROVE if auto_approve is None else bool(auto_approve)
+        if auto:
+            asyncio.create_task(self._auto_approve_when_ready(run_id))
         return run_id
 
     async def get_state(self, run_id: str) -> FeatureRunState | None:
@@ -278,11 +463,48 @@ class CodeAgentRunner:
                     update_ticket_status_by_run(run_id_val, status_val)
             return snapshot.values  # type: ignore[return-value]
 
+    async def clarify_run(
+        self,
+        run_id: str,
+        answers: list[dict[str, Any]],
+    ) -> FeatureRunState | None:
+        """Re-run the planner with the user's answers to clarification questions."""
+        from app.agents.roles.planner import run_planner
+
+        logger.info("Clarifying run run_id=%s answers=%d", run_id, len(answers))
+        current = await self.get_state(run_id)
+        if not current:
+            return None
+        if current.get("status") != "awaiting_clarification":
+            raise ValueError(f"Run {run_id} is not awaiting clarification (status={current.get('status')})")
+
+        result = await run_planner(
+            current["user_request"],
+            current["project_path"],
+            run_id=run_id,
+            attachment_paths=current.get("attachment_paths") or None,
+            linked_issues_context=current.get("linked_issues_context"),
+            acceptance_criteria_hint=current.get("acceptance_criteria_hint") or None,
+            clarification_answers=answers,
+        )
+
+        patch: dict[str, Any] = {
+            "status": "awaiting_approval",
+            "clarification_answers": answers,
+            "clarification_questions": [],
+            "context_bundle": result["context_bundle"],
+            "plan": result["plan"],
+            "acceptance_criteria": result["acceptance_criteria"],
+            "messages": result["messages"],
+        }
+        return await self._patch_state(run_id, patch)
+
     async def approve_run(
         self,
         run_id: str,
         *,
         workspace_mode: str = "worktree",
+        base_ref: str | None = None,
     ) -> FeatureRunState | None:
         logger.info("Approving run run_id=%s workspace_mode=%s", run_id, workspace_mode)
         current = await self.get_state(run_id)
@@ -296,11 +518,14 @@ class CodeAgentRunner:
         try:
             # prepare_workspace runs `pub get` (up to minutes); keep it off the
             # event loop so the API and other runs stay responsive.
+            # base_ref lets an epic-run branch this child's worktree off the
+            # shared integration branch instead of the project's HEAD.
             workspace = await asyncio.to_thread(
                 prepare_workspace,
                 current["project_path"],
                 run_id=run_id,
                 workspace_mode=mode,  # type: ignore[arg-type]
+                base_ref=base_ref,
             )
             logger.info(
                 "Workspace ready run_id=%s mode=%s path=%s",
@@ -351,15 +576,39 @@ class CodeAgentRunner:
             await self.get_state(run_id)
             self._reap_tasks(exclude=run_id)
 
-    def _revert_worktree_edits(self, worktree_path: str) -> None:
-        """Undo only the uncommitted changes the previous execution made in the
-        worktree, returning the tree to its baseline (the dev loop stages but
-        never commits, so reset --hard + clean restores base). The worktree
-        itself is preserved so the next execution reuses it."""
+    def _revert_worktree_edits(
+        self,
+        worktree_path: str,
+        *,
+        run_id: str | None = None,
+        workspace_mode: str = "worktree",
+    ) -> None:
+        """Undo the previous execution's edits so the next attempt starts clean.
+
+        In-place runs edit the user's real checkout, so a blanket reset/clean
+        would destroy their uncommitted work. There we restore only the files
+        the agent touched from the per-run baseline snapshots, leaving every
+        other change alone. Worktree runs are isolated, so the original
+        reset --hard + clean is safe and faster."""
         import subprocess
 
         if not worktree_path or not os.path.exists(worktree_path):
             return
+
+        if workspace_mode == "in_place":
+            baseline_dir = (
+                os.path.join(settings.CODE_AGENT_DATA_DIR, "baselines", run_id)
+                if run_id
+                else None
+            )
+            if baseline_dir:
+                restored = restore_all_baselines(baseline_dir, worktree_path)
+                logger.info(
+                    "Reverted in-place run %s via %d baseline snapshot(s)",
+                    run_id, len(restored),
+                )
+            return
+
         subprocess.run(
             ["git", "-C", worktree_path, "reset", "--hard", "HEAD"],
             capture_output=True,
@@ -423,14 +672,23 @@ class CodeAgentRunner:
         worktree_path = current.get("worktree_path")
         if worktree_path:
             # Reuse the current tree, reverting only the previous run's changes.
-            await asyncio.to_thread(self._revert_worktree_edits, worktree_path)
+            await asyncio.to_thread(
+                self._revert_worktree_edits,
+                worktree_path,
+                run_id=run_id,
+                workspace_mode=current.get("workspace_mode") or "worktree",
+            )
 
             seed: FeatureRunState = initial_state(
                 new_run_id, current["user_request"], current["project_path"]
             )
             seed.update(lineage)
             seed["max_iterations"] = settings.CODE_AGENT_MAX_VERIFIER_ITERATIONS
-            seed["plan"] = current.get("plan", {})
+            seed["plan"] = _augment_plan_from_verifier(
+                current.get("plan") or {},
+                current.get("verifier_report"),
+                project_path=current.get("project_path"),
+            )
             seed["acceptance_criteria"] = current.get("acceptance_criteria", [])
             seed["context_bundle"] = current.get("context_bundle", {})
             seed["status"] = "awaiting_approval"

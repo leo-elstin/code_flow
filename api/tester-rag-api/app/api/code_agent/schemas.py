@@ -5,6 +5,8 @@ class StartRunRequest(BaseModel):
     request: str = Field(..., description="Feature request for the code agent pipeline")
     project_path: str = Field(..., description="Absolute path to the target git repository")
     ticket_id: int | None = None
+    # None = fall back to the CODE_AGENT_AUTO_APPROVE server default.
+    auto_approve: bool | None = None
 
 
 class StartRunResponse(BaseModel):
@@ -21,6 +23,18 @@ class ApproveRunRequest(BaseModel):
         default="worktree",
         description="worktree = isolated git worktree; in_place = edit the main project checkout",
     )
+
+
+class ClarifyAnswer(BaseModel):
+    question_id: str
+    question: str = ""
+    option_id: str
+    option_label: str = ""
+    option_description: str = ""
+
+
+class ClarifyRunRequest(BaseModel):
+    answers: list[ClarifyAnswer]
 
 
 class MergeRunRequest(BaseModel):
@@ -154,6 +168,8 @@ class TicketResponse(BaseModel):
     jira_key: str | None = None
     jira_issue_type: str | None = None
     jira_parent_key: str | None = None
+    jira_status: str | None = None
+    jira_priority: str | None = None
     created_at: str
     updated_at: str
 
@@ -234,6 +250,7 @@ class RunStatusResponse(BaseModel):
     iteration: int | None = None
     plan: dict | None = None
     acceptance_criteria: list[str] | None = None
+    clarification_questions: list[dict] | None = None
     context_bundle: dict | None = None
     file_changes: list[dict] | None = None
     diffs: list[dict] | None = None
@@ -274,3 +291,47 @@ class JiraStatusCheckResponse(BaseModel):
 
 class JiraTransitionResponse(BaseModel):
     transitions: list[dict] = Field(default_factory=list)
+
+
+class EpicChildRun(BaseModel):
+    ticket_id: int
+    jira_key: str | None = None
+    title: str | None = None
+    run_id: str | None = None
+    status: str = "pending"
+
+
+class StartEpicRunRequest(BaseModel):
+    # None = fall back to the EPIC_AUTO_APPROVE server default.
+    auto_approve: bool | None = None
+    workspace_mode: str = "worktree"
+
+
+class StartEpicRunResponse(BaseModel):
+    epic_run_id: str
+    status: str
+
+
+class ApproveEpicRunRequest(BaseModel):
+    workspace_mode: str = "worktree"
+
+
+class EpicRunResponse(BaseModel):
+    epic_run_id: str
+    epic_ticket_id: int
+    epic_jira_key: str | None = None
+    status: str
+    workspace_mode: str = "worktree"
+    integration_branch: str | None = None
+    auto_approve: bool = False
+    # plan = {levels: [[ticket_id,...],...], edges, reasoning, had_cycle, nodes}
+    plan: dict | None = None
+    children: list[EpicChildRun] = Field(default_factory=list)
+    error: str | None = None
+    created_at: str | None = None
+    updated_at: str | None = None
+
+
+class EpicRunListResponse(BaseModel):
+    epic_runs: list[EpicRunResponse] = Field(default_factory=list)
+    total: int = 0

@@ -168,8 +168,107 @@ def maybe_run_build_runner(worktree_path: str, dart_paths: list[str]) -> dict:
     return result
 
 
+def dart_source_signature(worktree_path: str, dart_paths: list[str]) -> str:
+    """Content hash of the non-generated Dart source files in *dart_paths*.
+
+    Used to tell whether build_runner's inputs changed between the dev finalize and
+    the verifier: if the signature is unchanged, the verifier can reuse the dev run's
+    result instead of re-running build_runner (2-3 min saved per cycle). Generated
+    outputs (*.g.dart, *.freezed.dart, …) are excluded because build_runner rewrites
+    them, which would otherwise make every signature differ from itself."""
+    import hashlib
+
+    digest = hashlib.sha256()
+    for rel in sorted(set(dart_paths)):
+        if not rel.endswith(".dart") or is_generated_dart_path(rel):
+            continue
+        abs_path = os.path.join(worktree_path, rel)
+        try:
+            with open(abs_path, "rb") as handle:
+                data = handle.read()
+        except OSError:
+            data = b""
+        digest.update(rel.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(hashlib.sha256(data).digest())
+    return digest.hexdigest()
+
+
 def is_generated_dart_path(path: str) -> bool:
     return path.endswith(_GENERATED_SUFFIXES)
+
+
+# Matches an injectable/get_it annotation immediately preceding a class decl,
+# tolerating stacked annotations between them. Captures the class name.
+_INJECTABLE_CLASS_RE = re.compile(
+    r"@(?:lazySingleton|singleton|injectable|Injectable|LazySingleton|Singleton)\b"
+    r"[^\n]*\n(?:\s*@[^\n]*\n)*"
+    r"\s*(?:abstract\s+)?class\s+(\w+)",
+)
+
+
+def injectable_classes(content: str) -> set[str]:
+    """Return class names in *content* that carry an injectable/get_it annotation
+    (@injectable, @lazySingleton, @singleton, and their PascalCase forms)."""
+    return set(_INJECTABLE_CLASS_RE.findall(content))
+
+
+def check_di_registrations(worktree_path: str, created_paths: list[str]) -> dict:
+    """Confirm newly-created injectable classes are wired into the generated DI graph.
+
+    injectable/get_it registrations live in generated ``*.config.dart`` files, which
+    are commonly gitignored (so they never appear in a git diff). build_runner emits
+    them on disk, so this reads those files directly rather than trusting the diff.
+
+    Returns a dict with:
+      - checked: whether any annotated classes were found to verify
+      - registered: {class_name: config_file} for classes confirmed in the DI graph
+      - missing: class names annotated injectable but absent from every config file
+    """
+    annotated: dict[str, str] = {}
+    for rel in created_paths:
+        if not rel.endswith(".dart") or is_generated_dart_path(rel):
+            continue
+        abs_path = os.path.join(worktree_path, rel)
+        try:
+            with open(abs_path, encoding="utf-8") as handle:
+                content = handle.read()
+        except OSError:
+            continue
+        for cls in injectable_classes(content):
+            annotated[cls] = rel
+
+    if not annotated:
+        return {"checked": False, "registered": {}, "missing": []}
+
+    config_blobs: list[tuple[str, str]] = []
+    lib_root = os.path.join(worktree_path, "lib")
+    for root, dirs, files in os.walk(lib_root):
+        dirs[:] = [d for d in dirs if d != ".dart_tool"]
+        for name in files:
+            if name.endswith(".config.dart"):
+                abs_cfg = os.path.join(root, name)
+                try:
+                    with open(abs_cfg, encoding="utf-8") as handle:
+                        config_blobs.append((os.path.relpath(abs_cfg, worktree_path), handle.read()))
+                except OSError:
+                    pass
+
+    registered: dict[str, str] = {}
+    for cls in annotated:
+        pattern = re.compile(rf"\b{re.escape(cls)}\b")
+        for rel_cfg, blob in config_blobs:
+            if pattern.search(blob):
+                registered[cls] = rel_cfg
+                break
+
+    missing = sorted(cls for cls in annotated if cls not in registered)
+    return {
+        "checked": True,
+        "annotated": annotated,
+        "registered": registered,
+        "missing": missing,
+    }
 
 
 def run_dart_analyze(worktree_path: str, files: list[str] | None = None) -> dict:

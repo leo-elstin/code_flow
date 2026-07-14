@@ -15,11 +15,13 @@ import {
 } from '@/lib/models';
 import { CodeAgentApiClient } from '@/lib/api-client';
 import Sidebar from '@/components/Sidebar';
-import SidePanel from '@/components/SidePanel';
+import TicketBoard from '@/components/TicketBoard';
 import TicketChildrenDrawer from '@/components/TicketChildrenDrawer';
 import CenterPane from '@/components/CenterPane';
+import EpicRunPanel from '@/components/EpicRunPanel';
 import SettingsScreen from '@/components/SettingsScreen';
 import AgentLogsView from '@/components/AgentLogsView';
+import { classifyIssueType } from '@/lib/jira-hierarchy';
 import { Toaster, toast } from 'sonner';
 
 export default function Home() {
@@ -58,6 +60,8 @@ export default function Home() {
   // Global loading/busy indicator
   const [isBusy, setIsBusy] = useState(false);
   const [isRunLoading, setIsRunLoading] = useState(false);
+  // Bumped to force the EpicRunPanel to reload after starting an epic from the queue.
+  const [epicReloadNonce, setEpicReloadNonce] = useState(0);
 
   // Polling ref
   const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
@@ -119,6 +123,26 @@ export default function Home() {
       stopPolling();
     };
   }, [activeRunId, runStatus]);
+
+  // Board polling: keep the kanban columns live whenever ANY ticket is in an
+  // active status (planning → qa). The single-run polling loop above only fires
+  // for a selected run, so epic children — which advance in the background —
+  // never refreshed the board without this. Depends on a derived boolean so it
+  // only (re)arms when activity starts/stops, not on every poll.
+  const hasActiveTickets = tickets.some((t) =>
+    ['planning', 'awaiting_approval', 'developing', 'verifying', 'qa'].includes(t.status)
+  );
+  useEffect(() => {
+    if (!(selectedProjectId && hasActiveTickets)) return;
+    const id = setInterval(async () => {
+      try {
+        setTickets(await CodeAgentApiClient.listTickets(selectedProjectId));
+      } catch (e) {
+        console.error('Board ticket poll error:', e);
+      }
+    }, 3000);
+    return () => clearInterval(id);
+  }, [hasActiveTickets, selectedProjectId]);
 
   const startPolling = (runId: string) => {
     if (pollingIntervalRef.current) return;
@@ -334,7 +358,21 @@ export default function Home() {
     }
   };
 
-  const handleStartRun = async (ticketId: number) => {
+  const handleRunEpic = async (ticketId: number) => {
+    try {
+      await CodeAgentApiClient.startEpicRun(ticketId);
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to start epic run');
+      return;
+    }
+    if (selectedTicketId !== ticketId) {
+      await handleSelectTicket(ticketId);
+    }
+    setEpicReloadNonce((n) => n + 1);
+    toast.success('Epic planning started');
+  };
+
+  const handleStartRun = async (ticketId: number, autoApprove?: boolean) => {
     const project = projects.find(p => p.id === selectedProjectId);
     const ticket = tickets.find(t => t.id === ticketId);
     if (!project || !ticket) return;
@@ -349,7 +387,8 @@ export default function Home() {
       const runId = await CodeAgentApiClient.startRun(
         ticket.description || ticket.title,
         project.path,
-        ticket.id
+        ticket.id,
+        autoApprove
       );
       setActiveRunId(runId);
       
@@ -439,6 +478,24 @@ export default function Home() {
       toast.success('Task execution resumed');
     } catch (err: any) {
       throw new Error(err.message || 'Resume action failed');
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  const handleClarifyRun = async (answers: import('@/lib/models').ClarifyAnswer[]) => {
+    if (!activeRunId) return;
+    setIsBusy(true);
+    try {
+      const runData = await CodeAgentApiClient.clarifyRun(activeRunId, answers);
+      setRunStatus(runData);
+      if (answers.length === 0) {
+        toast.success('Skipped — planner will decide');
+      } else {
+        toast.success('Answers submitted — generating final plan…');
+      }
+    } catch (err: any) {
+      throw new Error(err.message || 'Failed to submit clarification answers');
     } finally {
       setIsBusy(false);
     }
@@ -576,6 +633,7 @@ export default function Home() {
 
   const selectedProject = projects.find(p => p.id === selectedProjectId) || null;
   const selectedTicket = tickets.find(t => t.id === selectedTicketId) || null;
+  const selectedIsEpic = selectedTicket ? classifyIssueType(selectedTicket) === 'epic' : false;
   const childrenDrawerParent = tickets.find(t => t.id === childrenDrawerParentId) || null;
 
   const handleSelectTicketFromDrawer = (id: number) => {
@@ -647,10 +705,10 @@ export default function Home() {
           />
         ) : (
           /* Main Multi-Pane View (All Tickets / My Tasks) */
-          <>
-            {/* Column 2: SidePanel Ticket Queue (Flex 45) */}
-            <div className="w-[45%] flex-shrink-0 min-w-[320px] max-w-[500px]">
-              <SidePanel
+          <div className="flex-1 relative overflow-hidden min-w-0">
+            {/* Board fills the full area */}
+            <div className="w-full h-full">
+              <TicketBoard
                 selectedProject={selectedProject}
                 tickets={tickets}
                 selectedTicketId={selectedTicketId}
@@ -661,39 +719,74 @@ export default function Home() {
                 onCreateTicket={handleCreateTicket}
                 onSyncJiraTickets={() => selectedProjectId && handleSyncJiraTickets(selectedProjectId)}
                 onDeleteTicket={handleDeleteTicket}
-                onOpenChildren={(id) => setChildrenDrawerParentId(id)}
+                onRunEpic={handleRunEpic}
               />
             </div>
 
-            {/* Column 3: CenterPane Detail Workspace (Flex 55) */}
-            <div className="flex-1 min-w-0">
-              <CenterPane
-                ticket={selectedTicket}
-                run={runStatus}
-                activityEvents={activityEvents}
-                currentAction={currentAction}
-                tokenUsage={tokenUsage}
-                executions={executions}
-                isBusy={isBusy}
-                isRunLoading={isRunLoading}
-                onClearRunView={() => {
-                  setSelectedTicketId(null);
-                  localStorage.removeItem('code_agent_selected_ticket_id');
-                  setRunStatus(null);
-                  setActiveRunId(null);
-                }}
-                onStartRun={handleStartRun}
-                onApproveRun={handleApproveRun}
-                onRejectRun={handleRejectRun}
-                onRetryRun={handleRetryRun}
-                onRevertRun={handleRevertRun}
-                onResumeRun={handleResumeRun}
-                onMergeRun={handleMergeRun}
-                onClearActivityLogs={handleClearActivityLogs}
-                onStopWatchingRun={handleStopWatchingRun}
-              />
+            {/* Dim backdrop — click outside to close */}
+            <div
+              className={`absolute inset-0 z-10 bg-slate-900/20 backdrop-blur-[1px] transition-opacity duration-300 ${
+                selectedTicket ? 'opacity-100' : 'opacity-0 pointer-events-none'
+              }`}
+              onClick={() => {
+                setSelectedTicketId(null);
+                localStorage.removeItem('code_agent_selected_ticket_id');
+                setRunStatus(null);
+                setActiveRunId(null);
+              }}
+            />
+
+            {/* Sliding drawer — overlays from the right. Epics get a wider 60vw
+                panel (dependency levels + long status text need the room); the
+                per-ticket run view keeps the narrower fixed width. */}
+            <div
+              className={`absolute inset-y-0 right-0 z-20 ${
+                selectedIsEpic ? 'w-[60vw] min-w-[640px]' : 'w-[620px] max-w-[85vw]'
+              } bg-white border-l border-slate-200/80 shadow-2xl overflow-hidden flex flex-col transition-transform duration-300 ease-in-out ${
+                selectedTicket ? 'translate-x-0' : 'translate-x-full pointer-events-none'
+              }`}
+            >
+              {selectedTicket && (
+                selectedIsEpic ? (
+                  <EpicRunPanel
+                    key={`epic-${selectedTicket.id}-${epicReloadNonce}`}
+                    ticket={selectedTicket}
+                    tickets={tickets}
+                    projectId={selectedProjectId}
+                    jiraBaseUrl={jiraStatus?.base_url || undefined}
+                    onSelectChild={handleSelectTicket}
+                  />
+                ) : (
+                  <CenterPane
+                    ticket={selectedTicket}
+                    run={runStatus}
+                    activityEvents={activityEvents}
+                    currentAction={currentAction}
+                    tokenUsage={tokenUsage}
+                    executions={executions}
+                    isBusy={isBusy}
+                    isRunLoading={isRunLoading}
+                    onClearRunView={() => {
+                      setSelectedTicketId(null);
+                      localStorage.removeItem('code_agent_selected_ticket_id');
+                      setRunStatus(null);
+                      setActiveRunId(null);
+                    }}
+                    onStartRun={handleStartRun}
+                    onApproveRun={handleApproveRun}
+                    onRejectRun={handleRejectRun}
+                    onRetryRun={handleRetryRun}
+                    onRevertRun={handleRevertRun}
+                    onResumeRun={handleResumeRun}
+                    onMergeRun={handleMergeRun}
+                    onClarifyRun={handleClarifyRun}
+                    onClearActivityLogs={handleClearActivityLogs}
+                    onStopWatchingRun={handleStopWatchingRun}
+                  />
+                )
+              )}
             </div>
-          </>
+          </div>
         )}
       </div>
     </div>

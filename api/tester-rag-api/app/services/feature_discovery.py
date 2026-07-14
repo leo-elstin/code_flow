@@ -69,6 +69,57 @@ def _collect_symbols(project_path: str, files: set[str]) -> list[dict[str, Any]]
     return symbols[:50]
 
 
+def _dedupe_evidence(
+    grep_matches: list[dict[str, Any]],
+    lsp_hits: list[dict[str, Any]],
+    symbols: list[dict[str, Any]],
+    *,
+    max_symbols_per_file: int = 5,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+    """Collapse overlapping discovery evidence before it reaches the planner.
+
+    Grep, LSP navigation, and tree-sitter symbols mostly point at the same
+    files: LSP reference evidence alone can repeat one file_path up to
+    max_reference_files times per grep match. Deduping here shrinks both the
+    stored context_bundle and the planner prompt without losing signal."""
+    seen_lines: set[tuple[Any, Any]] = set()
+    grep_out: list[dict[str, Any]] = []
+    for match in grep_matches:
+        key = (match.get("file_path"), match.get("line_number"))
+        if key in seen_lines:
+            continue
+        seen_lines.add(key)
+        grep_out.append(match)
+
+    grep_files = {match.get("file_path") for match in grep_out}
+    seen_hits: set[tuple[Any, Any]] = set()
+    lsp_out: list[dict[str, Any]] = []
+    for hit in lsp_hits:
+        kind = hit.get("kind")
+        file_path = hit.get("file_path")
+        # A grep line already proves these files are relevant; navigation hits
+        # into them add no planner signal.
+        if kind in ("definition", "reference") and file_path in grep_files:
+            continue
+        key = (kind, file_path)
+        if key in seen_hits:
+            continue
+        seen_hits.add(key)
+        lsp_out.append(hit)
+
+    per_file: dict[Any, int] = {}
+    symbols_out: list[dict[str, Any]] = []
+    for symbol in symbols:
+        file_path = symbol.get("file_path")
+        count = per_file.get(file_path, 0)
+        if count >= max_symbols_per_file:
+            continue
+        per_file[file_path] = count + 1
+        symbols_out.append(symbol)
+
+    return grep_out, lsp_out, symbols_out
+
+
 def discover_context(
     user_request: str,
     project_path: str,
@@ -143,6 +194,19 @@ def discover_context(
             files=[str(project_guide.get("path") or "AGENTS.md")],
             meta={"tool": "project_guide"},
         )
+
+    # Always include dependency manifests so the LLM knows which packages exist.
+    manifest_candidates = ["pubspec.yaml", "pubspec.yml", "package.json"]
+    manifest_summaries: list[dict[str, Any]] = []
+    for name in manifest_candidates:
+        full = os.path.join(project_path, name)
+        if os.path.isfile(full):
+            try:
+                content = read_file(project_path, name, max_chars=8000)
+                manifest_summaries.append({"path": name, "preview": content, "lines": content.count("\n") + 1})
+            except OSError:
+                pass
+
     explorer = ProjectExplorer(project_path)
     explore_tree = explorer.explore("lib")
 
@@ -163,10 +227,8 @@ def discover_context(
         except OSError:
             continue
 
-    return {
-        "project_guide": project_guide,
-        "search_terms": terms,
-        "grep_matches": [
+    grep_evidence, lsp_evidence, symbol_evidence = _dedupe_evidence(
+        [
             {
                 "file_path": m.file_path,
                 "line_number": m.line_number,
@@ -174,8 +236,16 @@ def discover_context(
             }
             for m in grep_matches[:50]
         ],
-        "symbols": symbols,
-        "lsp_hits": lsp_hits[:40],
+        lsp_hits[:40],
+        symbols,
+    )
+    return {
+        "project_guide": project_guide,
+        "manifest_summaries": manifest_summaries,
+        "search_terms": terms,
+        "grep_matches": grep_evidence,
+        "symbols": symbol_evidence,
+        "lsp_hits": lsp_evidence,
         "explore_tree": explore_tree,
         "files": [item["path"] for item in file_summaries],
         "file_summaries": file_summaries,

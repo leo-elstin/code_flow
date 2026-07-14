@@ -149,6 +149,8 @@ def _sync_single_ticket(
         ticket_type=ticket_type,
         jira_issue_type=ticket.issue_type,
         jira_parent_key=ticket.parent_key,
+        jira_status=ticket.status,
+        jira_priority=ticket.priority,
     )
 
     # upsert_jira_ticket returns a dict with an "action" hint when available.
@@ -169,7 +171,15 @@ def update_jira_status_for_run(run_id: str, agent_status: str) -> None:
 
     This is a **fire-and-forget** hook — it logs warnings on failure but
     never raises so the calling pipeline is not disrupted.
+
+    No-op unless ``JIRA_WRITE_ENABLED=true`` in settings.
     """
+    if not settings.JIRA_WRITE_ENABLED:
+        logger.debug(
+            "Jira write-back disabled (JIRA_WRITE_ENABLED=false); skipping transition for run %s",
+            run_id,
+        )
+        return
     try:
         _do_update_jira_status(run_id, agent_status)
     except Exception:

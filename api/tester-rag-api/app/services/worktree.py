@@ -40,11 +40,18 @@ def prepare_workspace(
     run_id: str | None = None,
     *,
     workspace_mode: WorkspaceMode = "worktree",
+    base_ref: str | None = None,
 ) -> dict:
-    """Create an isolated worktree or use the main project checkout for editing."""
+    """Create an isolated worktree or use the main project checkout for editing.
+
+    ``base_ref`` (a branch name or commit) sets the start point for the new
+    worktree branch; when None the worktree branches from the project's current
+    HEAD (the default). Epic execution uses this to branch a dependent story's
+    worktree from the shared epic integration branch.
+    """
     if workspace_mode == "in_place":
         return _prepare_in_place_workspace(project_path, run_id=run_id)
-    info = create_worktree(project_path, run_id=run_id)
+    info = create_worktree(project_path, run_id=run_id, base_ref=base_ref)
     info["workspace_mode"] = "worktree"
     return info
 
@@ -53,16 +60,16 @@ def _prepare_in_place_workspace(project_path: str, run_id: str | None = None) ->
     if not os.path.isdir(os.path.join(project_path, ".git")):
         raise WorktreeError(f"Not a git repository: {project_path}")
 
-    # In-place mode edits the real checkout and the dev agent's roll_back_file
-    # runs `git checkout HEAD -- <path>`, which would silently discard any
-    # uncommitted changes to files it touches. Refuse on a dirty tracked tree.
-    # (Untracked files are not destroyed by checkout, so they don't block.)
+    # In-place mode edits the real checkout. The dev agent snapshots each file's
+    # pre-edit state before touching it (see app/tools/filesystem.py) and rolls
+    # back / reverts from those snapshots rather than from HEAD, so pre-existing
+    # uncommitted work is preserved. A dirty tree is therefore allowed; we only
+    # log it so the run record shows the checkout was not clean at start.
     if not is_repo_clean(project_path):
-        raise WorktreeError(
-            "In-place mode requires a clean working tree. The agent edits your "
-            "real checkout and can roll back tracked files, which would discard "
-            "uncommitted changes. Commit or stash your work and retry, or use "
-            "worktree mode."
+        logger.info(
+            "In-place workspace has uncommitted changes; agent edits land beside "
+            "them and baseline snapshots protect your work on rollback/retry: %s",
+            project_path,
         )
 
     run_id = run_id or str(uuid.uuid4())
@@ -144,7 +151,9 @@ def sync_dirty_files(project_path: str, worktree_path: str) -> None:
                     logger.warning("Failed to copy %s to worktree: %s", rel_path, exc)
 
 
-def create_worktree(project_path: str, run_id: str | None = None) -> dict:
+def create_worktree(
+    project_path: str, run_id: str | None = None, *, base_ref: str | None = None
+) -> dict:
     if not os.path.isdir(os.path.join(project_path, ".git")):
         raise WorktreeError(f"Not a git repository: {project_path}")
 
@@ -156,12 +165,12 @@ def create_worktree(project_path: str, run_id: str | None = None) -> dict:
     if os.path.exists(worktree_path):
         raise WorktreeError(f"Worktree already exists: {worktree_path}")
 
-    proc = subprocess.run(
-        ["git", "-C", project_path, "worktree", "add", "-b", branch, worktree_path],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    # `git worktree add -b <branch> <path> [<start-point>]` — when base_ref is
+    # given the new branch starts there instead of the project's HEAD.
+    cmd = ["git", "-C", project_path, "worktree", "add", "-b", branch, worktree_path]
+    if base_ref:
+        cmd.append(base_ref)
+    proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
     if proc.returncode != 0:
         raise WorktreeError(proc.stderr.strip() or "git worktree add failed")
 
