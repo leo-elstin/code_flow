@@ -14,6 +14,13 @@ class Settings:
         "CODE_AGENT_DEV_MODEL", os.getenv("OPENAI_CHAT_MODEL", "gpt-5.5")
     )
     OPENAI_EMBEDDING_MODEL: str = os.getenv("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small")
+    LITELLM_API_BASE: str | None = os.getenv("LITELLM_API_BASE")
+    LITELLM_VERBOSE: bool = os.getenv("LITELLM_VERBOSE", "false").lower() in ("1", "true", "yes")
+
+    # Jira write-back: disabled by default so agent runs never mutate Jira tickets.
+    # Set JIRA_WRITE_ENABLED=true to allow the pipeline to push status transitions
+    # back to Jira Cloud.
+    JIRA_WRITE_ENABLED: bool = os.getenv("JIRA_WRITE_ENABLED", "false").lower() in ("1", "true", "yes")
     INGEST_EMBEDDING_BATCH_SIZE: int = int(os.getenv("INGEST_EMBEDDING_BATCH_SIZE", "50"))
     INGEST_EMBEDDING_CONCURRENCY: int = int(os.getenv("INGEST_EMBEDDING_CONCURRENCY", "1"))
 
@@ -43,8 +50,58 @@ class Settings:
         "true",
         "yes",
     )
+    # When true, Jira tickets named in a ticket's own text (e.g. a cross-project
+    # rule ticket like OIPO-667) are fetched and their descriptions handed to the
+    # planner, so it can plan without pausing to ask about them.
+    CODE_AGENT_RESOLVE_REFERENCED_TICKETS: bool = os.getenv(
+        "CODE_AGENT_RESOLVE_REFERENCED_TICKETS", "true"
+    ).lower() in ("1", "true", "yes")
+    CODE_AGENT_MAX_REFERENCED_TICKETS: int = int(
+        os.getenv("CODE_AGENT_MAX_REFERENCED_TICKETS", "5")
+    )
     CODE_AGENT_LSP_TIMEOUT: int = int(os.getenv("CODE_AGENT_LSP_TIMEOUT", "30"))
+    # Agentic discovery: run a read-only explorer tool loop before planning that
+    # locates the concrete files a plan needs (Cursor-style), so the planner can
+    # produce a file-accurate plan instead of stopping to ask "which files?".
+    CODE_AGENT_AGENTIC_DISCOVERY: bool = os.getenv(
+        "CODE_AGENT_AGENTIC_DISCOVERY", "true"
+    ).lower() in ("1", "true", "yes")
+    CODE_AGENT_EXPLORER_MAX_STEPS: int = int(os.getenv("CODE_AGENT_EXPLORER_MAX_STEPS", "10"))
+    # How many explorer-found files to read into the planner context.
+    CODE_AGENT_EXPLORER_MAX_FILES: int = int(os.getenv("CODE_AGENT_EXPLORER_MAX_FILES", "8"))
+    # Per-request LLM timeout (seconds) and retry count. Without a timeout a
+    # stalled provider response hangs the whole run (planner/dev/verifier/qa)
+    # indefinitely, so this bounds every completion call.
+    CODE_AGENT_LLM_TIMEOUT: int = int(os.getenv("CODE_AGENT_LLM_TIMEOUT", "120"))
+    CODE_AGENT_LLM_MAX_RETRIES: int = int(os.getenv("CODE_AGENT_LLM_MAX_RETRIES", "1"))
+    # Timeout (seconds) for Jira REST calls so referenced-ticket resolution and
+    # sync can never hang a run.
+    CODE_AGENT_JIRA_TIMEOUT: int = int(os.getenv("CODE_AGENT_JIRA_TIMEOUT", "20"))
     CODE_AGENT_ANALYZE_BLOCKING: bool = os.getenv("CODE_AGENT_ANALYZE_BLOCKING", "true").lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+    # When > 0 and the deterministic gate passed, skip the verifier's LLM review
+    # for modify-only changes whose total diff is at most this many characters.
+    # 0 (default) always runs the LLM review.
+    CODE_AGENT_VERIFIER_SKIP_LLM_TRIVIAL_CHARS: int = int(
+        os.getenv("CODE_AGENT_VERIFIER_SKIP_LLM_TRIVIAL_CHARS", "0")
+    )
+    # Epic full-auto mode: default for the per-request auto_approve flag. When
+    # true (or when a start-epic request passes auto_approve=true) the epic plan
+    # is executed immediately without the human approval gate, and failed child
+    # stories are retried automatically up to EPIC_CHILD_AUTO_RETRIES times.
+    EPIC_AUTO_APPROVE: bool = os.getenv("EPIC_AUTO_APPROVE", "false").lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+    EPIC_CHILD_AUTO_RETRIES: int = int(os.getenv("EPIC_CHILD_AUTO_RETRIES", "1"))
+    # Default for single (non-epic) ticket runs: when true, a run approves its own
+    # plan and proceeds to development without the human "Review & Approve" gate.
+    # Overridable per request via the start-run auto_approve flag.
+    CODE_AGENT_AUTO_APPROVE: bool = os.getenv("CODE_AGENT_AUTO_APPROVE", "false").lower() in (
         "1",
         "true",
         "yes",

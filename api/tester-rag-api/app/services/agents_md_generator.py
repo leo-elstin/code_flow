@@ -2,7 +2,7 @@ import os
 import re
 from typing import Any
 
-from app.services.generation import get_generation_client, get_generation_model
+from app.services.generation import acompletion, get_generation_model
 from app.services.project_guide import load_project_guide
 
 _AGENTS_MD_FILENAME = "AGENTS.md"
@@ -124,8 +124,7 @@ async def generate_agents_md_content(project_path: str, hints: str = "") -> str:
         user_parts.append(f"User hints:\n{hints.strip()}")
     user_parts.append("Write AGENTS.md for coding agents implementing features in this project.")
 
-    client = get_generation_client()
-    response = await client.chat.completions.create(
+    response = await acompletion(
         model=get_generation_model(),
         messages=[
             {"role": "system", "content": _AGENTS_MD_SYSTEM},

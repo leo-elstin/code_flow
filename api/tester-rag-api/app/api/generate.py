@@ -3,7 +3,7 @@ from pydantic import BaseModel, Field
 
 from app.api.context import get_module_context, ContextRequest
 from app.core.config import settings
-from app.services.generation import get_generation_client, get_generation_model
+from app.services.generation import acompletion, get_generation_model
 
 router = APIRouter()
 
@@ -86,12 +86,11 @@ async def generate_module_tests(request: GenerateRequest):
     Focus on descriptive steps for a Vision-based AI agent.
     """
 
-    # 3. Generation (G) — OpenAI
-    client = get_generation_client()
+    # 3. Generation (G) — LiteLLM
     model_name = get_generation_model()
-    print(f"Generating tests using OpenAI model: {model_name} (Requested: {len(context_str)} chars)")
+    print(f"Generating tests using model: {model_name} (Requested: {len(context_str)} chars)")
     try:
-        response = await client.chat.completions.create(
+        response = await acompletion(
             model=model_name,
             messages=[
                 {"role": "system", "content": system_prompt},
@@ -118,7 +117,6 @@ async def generate_module_tests(request: GenerateRequest):
     description="Sends prompt directly to OpenAI and returns raw model text.",
 )
 async def generate_raw_response(request: PromptRequest):
-    client = get_generation_client()
     model_name = get_generation_model()
 
     messages = []
@@ -127,7 +125,7 @@ async def generate_raw_response(request: PromptRequest):
     messages.append({"role": "user", "content": request.prompt})
 
     try:
-        response = await client.chat.completions.create(
+        response = await acompletion(
             model=model_name,
             messages=messages,
         )

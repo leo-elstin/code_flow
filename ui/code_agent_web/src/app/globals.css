@@ -1,12 +1,15 @@
 @import "tailwindcss";
 @import "tw-animate-css";
+@plugin "@tailwindcss/typography";
+
+@import url('https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700;800&display=swap');
 
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
   --color-background: hsl(var(--background));
   --color-foreground: hsl(var(--foreground));
-  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-sans: var(--font-archivo), ui-sans-serif, system-ui, sans-serif;
   --font-mono: var(--font-geist-mono), ui-monospace, monospace;
   --color-ring: hsl(var(--ring));
   --color-input: hsl(var(--input));
@@ -39,67 +42,49 @@
   --radius-xl: calc(var(--radius) + 4px);
 }
 
-/* Light theme */
+/* ── CodeFlow brand tokens (Modernist palette, rounded/soft-shadow direction) ── */
 :root {
-  --radius: 0.5rem;
-  --background: 222.2 84% 4.9%;
-  --foreground: 210 40% 98%;
-  --card: 222.2 84% 4.9%;
-  --card-foreground: 210 40% 98%;
-  --popover: 222.2 84% 4.9%;
-  --popover-foreground: 210 40% 98%;
-  --primary: 217.2 91.2% 59.8%;
-  --primary-foreground: 222.2 47.4% 11.2%;
-  --secondary: 217.2 32.6% 17.5%;
-  --secondary-foreground: 210 40% 98%;
-  --muted: 217.2 32.6% 17.5%;
-  --muted-foreground: 215 20.2% 65.1%;
-  --accent: 217.2 32.6% 17.5%;
-  --accent-foreground: 210 40% 98%;
-  --destructive: 0 62.8% 30.6%;
-  --destructive-foreground: 210 40% 98%;
-  --border: 217.2 32.6% 17.5%;
-  --input: 217.2 32.6% 17.5%;
-  --ring: 224.3 76.3% 48%;
-  --sidebar: 222.2 84% 4.9%;
-  --sidebar-foreground: 210 40% 98%;
-  --sidebar-primary: 217.2 91.2% 59.8%;
-  --sidebar-primary-foreground: 210 40% 98%;
-  --sidebar-accent: 217.2 32.6% 17.5%;
-  --sidebar-accent-foreground: 210 40% 98%;
-  --sidebar-border: 217.2 32.6% 17.5%;
-  --sidebar-ring: 224.3 76.3% 48%;
-}
+  --radius: 0.625rem; /* 10px */
 
-/* Light override (unused if dark is default) */
-.light {
+  --cf-ink: #201e1d;
+  --cf-accent: #ec3013;
+  --cf-accent-hover: #dd2b0f;
+  --cf-accent-active: #ae1800;
+  --cf-accent-tint: #fff2ef;
+  --cf-accent-tint-border: #ffc4b8;
+  --cf-accent-tint-text: #7c1405;
+
+  --cf-shadow-sm: 0 1px 2px rgba(45, 43, 43, 0.14);
+  --cf-shadow-md: 0 3px 10px rgba(45, 43, 43, 0.16);
+  --cf-shadow-lg: 0 12px 32px rgba(45, 43, 43, 0.22);
+
   --background: 0 0% 100%;
-  --foreground: 222.2 84% 4.9%;
+  --foreground: 20 4% 11%;
   --card: 0 0% 100%;
-  --card-foreground: 222.2 84% 4.9%;
+  --card-foreground: 20 4% 11%;
   --popover: 0 0% 100%;
-  --popover-foreground: 222.2 84% 4.9%;
-  --primary: 221.2 83.2% 53.3%;
-  --primary-foreground: 210 40% 98%;
-  --secondary: 210 40% 96.1%;
-  --secondary-foreground: 222.2 47.4% 11.2%;
-  --muted: 210 40% 96.1%;
-  --muted-foreground: 215.4 16.3% 46.9%;
-  --accent: 210 40% 96.1%;
-  --accent-foreground: 222.2 47.4% 11.2%;
+  --popover-foreground: 20 4% 11%;
+  --primary: 9 88% 51%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 0 1% 92%;
+  --secondary-foreground: 20 4% 11%;
+  --muted: 0 1% 92%;
+  --muted-foreground: 0 2% 48%;
+  --accent: 9 88% 51%;
+  --accent-foreground: 0 0% 100%;
   --destructive: 0 84.2% 60.2%;
   --destructive-foreground: 210 40% 98%;
-  --border: 214.3 31.8% 91.4%;
-  --input: 214.3 31.8% 91.4%;
-  --ring: 221.2 83.2% 53.3%;
-  --sidebar: 210 40% 98%;
-  --sidebar-foreground: 222.2 84% 4.9%;
-  --sidebar-primary: 221.2 83.2% 53.3%;
-  --sidebar-primary-foreground: 210 40% 98%;
-  --sidebar-accent: 210 40% 96.1%;
-  --sidebar-accent-foreground: 222.2 47.4% 11.2%;
-  --sidebar-border: 214.3 31.8% 91.4%;
-  --sidebar-ring: 221.2 83.2% 53.3%;
+  --border: 0 3% 88%;
+  --input: 0 3% 88%;
+  --ring: 9 88% 51%;
+  --sidebar: 20 4% 11%;
+  --sidebar-foreground: 0 0% 100%;
+  --sidebar-primary: 9 88% 51%;
+  --sidebar-primary-foreground: 0 0% 100%;
+  --sidebar-accent: 0 0% 100% / 0.08;
+  --sidebar-accent-foreground: 0 0% 100%;
+  --sidebar-border: 0 0% 100% / 0.08;
+  --sidebar-ring: 9 88% 51%;
 }
 
 @layer base {

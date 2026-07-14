@@ -9,6 +9,7 @@ from app.api.code_agent.schemas import (
     ActivityEventResponse,
     ActivityListResponse,
     ApproveRunRequest,
+    ClarifyRunRequest,
     CurrentActionResponse,
     MergeRunRequest,
     MergeRunResponse,
@@ -21,6 +22,12 @@ from app.api.code_agent.schemas import (
     RunSummaryResponse,
     StartRunRequest,
     StartRunResponse,
+    StartEpicRunRequest,
+    StartEpicRunResponse,
+    ApproveEpicRunRequest,
+    EpicChildRun,
+    EpicRunResponse,
+    EpicRunListResponse,
     TokenUsageResponse,
 )
 from app.services.run_activity import (
@@ -30,6 +37,7 @@ from app.services.run_activity import (
 )
 from app.core.logging_config import get_logger
 from app.orchestration.runner import GitMergeConflictError, runner
+from app.orchestration.epic_runner import epic_runner
 from app.services.merge_worktree import MergeValidationError
 from app.services.project_ticket_store import get_project, get_ticket
 from app.services.worktree import resolve_worktree_path
@@ -84,6 +92,7 @@ def _to_response(state: dict) -> RunStatusResponse:
         iteration=state.get("iteration"),
         plan=state.get("plan") or None,
         acceptance_criteria=state.get("acceptance_criteria") or None,
+        clarification_questions=state.get("clarification_questions") or None,
         context_bundle=state.get("context_bundle") or None,
         file_changes=state.get("file_changes") or None,
         diffs=state.get("diffs") or None,
@@ -121,8 +130,11 @@ async def start_run(body: StartRunRequest):
         if not project or project["path"] != os.path.abspath(body.project_path):
             raise HTTPException(status_code=400, detail="Ticket does not belong to the given project")
     try:
-        run_id = await runner.start_run(body.request, body.project_path, ticket_id=body.ticket_id)
-        logger.info("POST /run success run_id=%s", run_id)
+        run_id = await runner.start_run(
+            body.request, body.project_path, ticket_id=body.ticket_id,
+            auto_approve=body.auto_approve,
+        )
+        logger.info("POST /run success run_id=%s auto_approve=%s", run_id, body.auto_approve)
         return StartRunResponse(run_id=run_id, status="planning")
     except Exception:
         logger.exception("POST /run error project_path=%s", body.project_path)
@@ -214,6 +226,29 @@ async def list_run_executions(run_id: str):
         executions=summaries,
         total=len(summaries),
     )
+
+
+@router.post("/runs/{run_id}/clarify", response_model=RunStatusResponse, status_code=202)
+async def clarify_run(run_id: str, body: ClarifyRunRequest):
+    logger.info("POST /runs/%s/clarify answers=%d", run_id, len(body.answers))
+    try:
+        state = await runner.get_state(run_id)
+        if not state:
+            logger.warning("POST /runs/%s/clarify not found", run_id)
+            raise HTTPException(status_code=404, detail="Run not found")
+        answers = [a.model_dump() for a in body.answers]
+        try:
+            state = await runner.clarify_run(run_id, answers)
+        except ValueError as exc:
+            logger.warning("POST /runs/%s/clarify rejected: %s", run_id, exc)
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        logger.info("POST /runs/%s/clarify success status=%s", run_id, state.get("status") if state else "?")
+        return _to_response(state)
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("POST /runs/%s/clarify error", run_id)
+        raise
 
 
 @router.post("/runs/{run_id}/approve", response_model=RunStatusResponse, status_code=202)
@@ -373,3 +408,107 @@ async def stream_run_events(run_id: str):
                 break
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+
+# ---------------------------------------------------------------------------
+# Epic-level execution
+# ---------------------------------------------------------------------------
+
+def _to_epic_response(state: dict) -> EpicRunResponse:
+    plan = state.get("plan") or {}
+    nodes = {n.get("ticket_id"): n for n in (plan.get("nodes") or [])}
+    children: list[EpicChildRun] = []
+    for entry in (state.get("child_runs") or {}).values():
+        tid = entry.get("ticket_id")
+        node = nodes.get(tid, {})
+        children.append(
+            EpicChildRun(
+                ticket_id=tid,
+                jira_key=entry.get("jira_key") or node.get("jira_key"),
+                title=node.get("title"),
+                run_id=entry.get("run_id"),
+                status=entry.get("status", "pending"),
+            )
+        )
+    children.sort(key=lambda c: c.ticket_id)
+    return EpicRunResponse(
+        epic_run_id=state["epic_run_id"],
+        epic_ticket_id=state["epic_ticket_id"],
+        epic_jira_key=state.get("epic_jira_key"),
+        status=state.get("status", "planning"),
+        workspace_mode=state.get("workspace_mode") or "worktree",
+        integration_branch=state.get("integration_branch"),
+        auto_approve=bool(state.get("auto_approve")),
+        plan=plan or None,
+        children=children,
+        error=state.get("error"),
+        created_at=state.get("created_at"),
+        updated_at=state.get("updated_at"),
+    )
+
+
+@router.post("/epics/{ticket_id}/run", response_model=StartEpicRunResponse, status_code=202)
+async def start_epic_run(ticket_id: int, body: StartEpicRunRequest | None = None):
+    """Plan and queue execution of every child story under an epic ticket."""
+    auto_approve = body.auto_approve if body else None
+    logger.info("POST /epics/%s/run auto_approve=%s", ticket_id, auto_approve)
+    if not get_ticket(ticket_id):
+        raise HTTPException(status_code=404, detail="Ticket not found")
+    try:
+        state = await epic_runner.start_epic_run(ticket_id, auto_approve=auto_approve)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    return StartEpicRunResponse(epic_run_id=state["epic_run_id"], status=state["status"])
+
+
+@router.get("/epics", response_model=EpicRunListResponse)
+async def list_epic_runs(
+    project_id: int | None = Query(default=None),
+    limit: int = Query(default=50, ge=1, le=200),
+):
+    rows = await epic_runner.list_epic_runs(project_id=project_id, limit=limit)
+    return EpicRunListResponse(
+        epic_runs=[_to_epic_response(r) for r in rows], total=len(rows)
+    )
+
+
+@router.get("/epics/{epic_run_id}", response_model=EpicRunResponse)
+async def get_epic_run(epic_run_id: str):
+    state = await epic_runner.get_state(epic_run_id)
+    if not state:
+        raise HTTPException(status_code=404, detail="Epic run not found")
+    return _to_epic_response(state)
+
+
+@router.post("/epics/{epic_run_id}/approve", response_model=EpicRunResponse, status_code=202)
+async def approve_epic_run(epic_run_id: str, body: ApproveEpicRunRequest | None = None):
+    logger.info("POST /epics/%s/approve", epic_run_id)
+    mode = body.workspace_mode if body else "worktree"
+    state = await epic_runner.approve_epic_run(epic_run_id, workspace_mode=mode)
+    if not state:
+        raise HTTPException(status_code=404, detail="Epic run not found")
+    return _to_epic_response(state)
+
+
+@router.post("/epics/{epic_run_id}/reject", response_model=EpicRunResponse)
+async def reject_epic_run(epic_run_id: str):
+    logger.info("POST /epics/%s/reject", epic_run_id)
+    state = await epic_runner.reject_epic_run(epic_run_id)
+    if not state:
+        raise HTTPException(status_code=404, detail="Epic run not found")
+    return _to_epic_response(state)
+
+
+@router.post("/epics/{epic_run_id}/resume", response_model=EpicRunResponse, status_code=202)
+async def resume_epic_run(epic_run_id: str):
+    """Continue a failed epic from where it stopped, re-running only the stories
+    that did not complete and preserving the integration branch."""
+    logger.info("POST /epics/%s/resume", epic_run_id)
+    if not await epic_runner.get_state(epic_run_id):
+        raise HTTPException(status_code=404, detail="Epic run not found")
+    try:
+        state = await epic_runner.resume_epic_run(epic_run_id)
+    except ValueError as exc:
+        logger.warning("POST /epics/%s/resume rejected: %s", epic_run_id, exc)
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return _to_epic_response(state)

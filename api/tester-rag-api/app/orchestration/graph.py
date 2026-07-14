@@ -1,3 +1,5 @@
+import asyncio
+
 from langgraph.graph import END, START, StateGraph
 
 from app.agents.roles.dev import run_dev
@@ -12,18 +14,63 @@ from app.services.run_activity import append_activity
 logger = get_logger("graph")
 
 
+async def _enrich_linked_issues_context(state: FeatureRunState) -> str | None:
+    """Pull the bodies of Jira tickets named in the request into the linked-issues
+    context, so the planner sees referenced rules (e.g. a cross-project ticket
+    like OIPO-667) instead of stopping to ask about them.
+
+    Runs on every planning pass — fresh run, resume, or retry — so answering a
+    clarification and re-planning also benefits. Idempotent and best-effort: the
+    original context stands on any failure or when nothing new is referenced."""
+    linked = state.get("linked_issues_context")
+    if not settings.CODE_AGENT_RESOLVE_REFERENCED_TICKETS:
+        return linked
+    if linked and "Referenced Jira tickets" in linked:
+        return linked  # already enriched (e.g. at run creation)
+    try:
+        from app.services.jira_service import build_referenced_tickets_context
+
+        ref_text = "\n".join(
+            [state.get("user_request") or "", *(state.get("acceptance_criteria_hint") or [])]
+        )
+        referenced = await asyncio.to_thread(build_referenced_tickets_context, ref_text)
+    except Exception as exc:  # noqa: BLE001 — enrichment is best-effort
+        logger.warning(
+            "Referenced-ticket enrichment (planner) failed run_id=%s: %s",
+            state.get("run_id", ""), exc,
+        )
+        return linked
+    if not referenced:
+        return linked
+    logger.info("Planner enriched with referenced Jira ticket(s) run_id=%s", state.get("run_id", ""))
+    existing = (linked or "").strip()
+    return f"{existing}\n\n{referenced}".strip() if existing else referenced
+
+
 async def planner_node(state: FeatureRunState) -> dict:
     run_id = state.get("run_id", "")
     logger.info("Planner starting run_id=%s", run_id)
     try:
+        linked_issues_context = await _enrich_linked_issues_context(state)
         result = await run_planner(
             state["user_request"],
             state["project_path"],
             run_id=run_id or None,
             attachment_paths=state.get("attachment_paths") or None,
-            linked_issues_context=state.get("linked_issues_context"),
+            linked_issues_context=linked_issues_context,
             acceptance_criteria_hint=state.get("acceptance_criteria_hint") or None,
+            clarification_answers=state.get("clarification_answers") or None,
         )
+        questions = result.get("questions") or []
+        if questions:
+            logger.info("Planner awaiting clarification run_id=%s questions=%d", run_id, len(questions))
+            return {
+                "status": "awaiting_clarification",
+                "context_bundle": result["context_bundle"],
+                "plan": result["plan"],
+                "clarification_questions": questions,
+                "messages": result["messages"],
+            }
         logger.info("Planner success run_id=%s status=awaiting_approval", run_id)
         return {
             "status": "awaiting_approval",
@@ -62,6 +109,7 @@ async def dev_node(state: FeatureRunState) -> dict:
             project_path=state["project_path"],
             verifier_report=state.get("verifier_report") or None,
             run_id=run_id or None,
+            prior_messages=state.get("dev_messages") or None,
         )
         logger.info(
             "Dev success run_id=%s file_changes=%d",
@@ -73,6 +121,8 @@ async def dev_node(state: FeatureRunState) -> dict:
             "file_changes": result.get("file_changes", []),
             "truncated": result.get("truncated", False),
             "messages": result.get("messages", []),
+            "dev_messages": result.get("dev_messages", []),
+            "dev_build_runner": result.get("dev_build_runner", {}),
         }
     except Exception:
         logger.exception("Dev error run_id=%s", run_id)
@@ -110,6 +160,7 @@ async def verifier_node(state: FeatureRunState) -> dict:
             file_changes=state.get("file_changes", []),
             project_path=state.get("project_path"),
             run_id=run_id or None,
+            prior_build_runner=state.get("dev_build_runner") or None,
         )
         report = result["verifier_report"]
 

@@ -10,6 +10,8 @@ import {
   JiraConfig,
   JiraSyncResult,
   JiraStatusCheck,
+  EpicRun,
+  ClarifyAnswer,
 } from './models';
 
 const BASE_URL_KEY = 'code_agent_api_base_url';
@@ -142,13 +144,19 @@ export class CodeAgentApiClient {
     });
   }
 
-  static async startRun(request: string, projectPath: string, ticketId?: number): Promise<string> {
+  static async startRun(
+    request: string,
+    projectPath: string,
+    ticketId?: number,
+    autoApprove?: boolean
+  ): Promise<string> {
     const data = await this._request<{ run_id: string }>('/api/code-agent/run', {
       method: 'POST',
       body: JSON.stringify({
         request,
         project_path: projectPath,
         ticket_id: ticketId,
+        ...(autoApprove === undefined ? {} : { auto_approve: autoApprove }),
       }),
     });
     return data.run_id;
@@ -165,6 +173,13 @@ export class CodeAgentApiClient {
     }
     const data = await this._request<{ runs: any[] }>(`/api/code-agent/runs?${params.toString()}`);
     return data.runs || [];
+  }
+
+  static async clarifyRun(runId: string, answers: ClarifyAnswer[]): Promise<CodeAgentRunStatus> {
+    return this._request<CodeAgentRunStatus>(`/api/code-agent/runs/${runId}/clarify`, {
+      method: 'POST',
+      body: JSON.stringify({ answers }),
+    });
   }
 
   static async approveRun(runId: string, workspaceMode: 'worktree' | 'in_place'): Promise<CodeAgentRunStatus> {
@@ -290,5 +305,62 @@ export class CodeAgentApiClient {
     return this._request<any>(
       `/api/code-agent/projects/${projectId}/jira/transitions?issue_key=${encodeURIComponent(issueKey)}`
     );
+  }
+
+  // -- Epic-level execution --------------------------------------------------
+
+  static async startEpicRun(
+    ticketId: number,
+    autoApprove?: boolean
+  ): Promise<{ epic_run_id: string; status: string }> {
+    return this._request<{ epic_run_id: string; status: string }>(
+      `/api/code-agent/epics/${ticketId}/run`,
+      {
+        method: 'POST',
+        ...(autoApprove === undefined
+          ? {}
+          : {
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ auto_approve: autoApprove }),
+            }),
+      }
+    );
+  }
+
+  static async getEpicRun(epicRunId: string): Promise<EpicRun> {
+    return this._request<EpicRun>(`/api/code-agent/epics/${epicRunId}`);
+  }
+
+  static async approveEpicRun(
+    epicRunId: string,
+    workspaceMode: 'worktree' | 'in_place' = 'worktree'
+  ): Promise<EpicRun> {
+    return this._request<EpicRun>(`/api/code-agent/epics/${epicRunId}/approve`, {
+      method: 'POST',
+      body: JSON.stringify({ workspace_mode: workspaceMode }),
+    });
+  }
+
+  static async rejectEpicRun(epicRunId: string): Promise<EpicRun> {
+    return this._request<EpicRun>(`/api/code-agent/epics/${epicRunId}/reject`, {
+      method: 'POST',
+    });
+  }
+
+  /** Continue a failed epic from where it stopped — re-runs only the stories
+   * that did not complete, preserving the integration branch. */
+  static async resumeEpicRun(epicRunId: string): Promise<EpicRun> {
+    return this._request<EpicRun>(`/api/code-agent/epics/${epicRunId}/resume`, {
+      method: 'POST',
+    });
+  }
+
+  static async listEpicRuns(projectId?: number, limit = 50): Promise<EpicRun[]> {
+    const params = new URLSearchParams({ limit: String(limit) });
+    if (projectId != null) params.append('project_id', String(projectId));
+    const data = await this._request<{ epic_runs: EpicRun[] }>(
+      `/api/code-agent/epics?${params.toString()}`
+    );
+    return data.epic_runs || [];
   }
 }

@@ -13,6 +13,10 @@ Return JSON with keys:
 - manual_checklist (list of strings)
 """
 
+# Same caps as the verifier LLM review (app/agents/roles/verifier.py).
+_MAX_DIFF_FILES = 20
+_MAX_DIFF_CHARS = 6_000
+
 
 async def run_qa(
     *,
@@ -50,7 +54,13 @@ async def run_qa(
                     {
                         "plan": plan,
                         "acceptance_criteria": acceptance_criteria,
-                        "diffs": diffs[:25],
+                        "diffs": [
+                            {
+                                "path": d.get("path"),
+                                "diff": (d.get("diff") or "")[:_MAX_DIFF_CHARS],
+                            }
+                            for d in diffs[:_MAX_DIFF_FILES]
+                        ],
                         "widget_trees": widget_trees[:5],
                     },
                     indent=2,
