@@ -107,10 +107,10 @@ export default function CenterPane({
 
   if (!ticket) {
     return (
-      <div className="flex flex-col items-center justify-center h-full p-8 text-center bg-slate-50/20 select-none">
-        <FileText size={48} className="text-slate-300 mb-4" />
-        <h3 className="text-sm font-bold text-slate-700">No Ticket Selected</h3>
-        <p className="text-xs text-slate-400 max-w-[240px] mt-1.5 leading-normal">
+      <div className="flex flex-col items-center justify-center h-full p-8 text-center bg-neutral-50/40 select-none">
+        <FileText size={48} className="text-neutral-300 mb-4" />
+        <h3 className="text-sm font-bold text-neutral-700">No Ticket Selected</h3>
+        <p className="text-xs text-neutral-400 max-w-[240px] mt-1.5 leading-normal">
           Select a task from the queue to view implementation plans and run execution.
         </p>
       </div>
@@ -226,8 +226,8 @@ export default function CenterPane({
   // Render progress segments
   const renderProgressBar = () => {
     const activeColor = 'bg-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.5)]';
-    const doneColor = 'bg-blue-600';
-    const idleColor = 'bg-slate-200';
+    const doneColor = 'bg-[#ec3013]';
+    const idleColor = 'bg-neutral-200';
     const failedColor = 'bg-rose-500';
 
     let seg1 = idleColor;
@@ -280,8 +280,8 @@ export default function CenterPane({
               const tool = ev.meta?.tool || '';
               const action = tool === 'write_file' ? 'Modified' : 'Modified';
               items.push(
-                <div key={file} className="font-mono text-xs text-slate-600 hover:text-slate-900 flex items-center gap-1.5 py-0.5">
-                  <span className="w-1.5 h-1.5 rounded-full bg-blue-400"></span>
+                <div key={file} className="font-mono text-xs text-neutral-600 hover:text-neutral-900 flex items-center gap-1.5 py-0.5">
+                  <span className="w-1.5 h-1.5 rounded-full bg-[#ec3013]"></span>
                   <span>{action} &apos;{file}&apos;</span>
                 </div>
               );
@@ -300,8 +300,8 @@ export default function CenterPane({
           const action = change.action || 'modified';
           const isCreated = action.toLowerCase() === 'create' || action.toLowerCase() === 'created';
           items.push(
-            <div key={path} className="font-mono text-xs text-slate-600 hover:text-slate-900 flex items-center gap-1.5 py-0.5">
-              <span className={`w-1.5 h-1.5 rounded-full ${isCreated ? 'bg-emerald-400' : 'bg-blue-400'}`}></span>
+            <div key={path} className="font-mono text-xs text-neutral-600 hover:text-neutral-900 flex items-center gap-1.5 py-0.5">
+              <span className={`w-1.5 h-1.5 rounded-full ${isCreated ? 'bg-emerald-400' : 'bg-[#ec3013]'}`}></span>
               <span>{isCreated ? 'Created' : 'Modified'} &apos;{path}&apos;</span>
             </div>
           );
@@ -310,7 +310,7 @@ export default function CenterPane({
     }
 
     if (items.length === 0) {
-      return <p className="text-xs text-slate-400 italic">No files affected yet.</p>;
+      return <p className="text-xs text-neutral-400 italic">No files affected yet.</p>;
     }
 
     return <div className="space-y-1 mt-1">{items}</div>;
@@ -349,16 +349,16 @@ export default function CenterPane({
   return (
     <div className="flex flex-col h-full bg-white select-none">
       {/* Top back chevron bar */}
-      <div className="p-3 border-b border-slate-100 flex items-center justify-between">
+      <div className="p-3 border-b border-neutral-100 flex items-center justify-between">
         <button
           onClick={onClearRunView}
-          className="p-1 text-slate-400 hover:text-slate-700 rounded-lg hover:bg-slate-100/60 transition-colors"
+          className="p-1.5 text-neutral-400 hover:text-neutral-700 rounded-lg hover:bg-neutral-100 transition-colors"
           title="Back to queue"
         >
           <ArrowLeft size={16} />
         </button>
         {run && (
-          <span className="text-[10px] text-slate-400 font-mono tracking-wider">
+          <span className="text-[10px] text-neutral-400 font-mono tracking-wider">
             RUN: {run.run_id.slice(0, 8)}...
           </span>
         )}
@@ -368,8 +368,8 @@ export default function CenterPane({
       <div className="flex-1 overflow-hidden flex flex-col min-h-0">
         <div className="p-6 pb-2">
           {/* Title */}
-          <h2 className="text-base font-bold text-slate-800 flex items-center gap-2">
-            <span className="text-blue-600 font-mono">T-{ticket.id}</span>
+          <h2 className="text-base font-bold text-neutral-800 flex items-center gap-2">
+            <span className="text-[#ec3013] font-mono">T-{ticket.id}</span>
             <span className="truncate">{ticket.title}</span>
           </h2>
 
@@ -378,32 +378,32 @@ export default function CenterPane({
         </div>
 
         <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 flex flex-col min-h-0">
-          <div className="px-6 border-b border-slate-100 bg-slate-50/50">
+          <div className="px-6 border-b border-neutral-100 bg-neutral-50/60">
             <TabsList className="bg-transparent border-0 h-10 p-0 gap-4">
               <TabsTrigger
                 value="overview"
-                className="data-[state=active]:bg-transparent data-[state=active]:shadow-none data-[state=active]:border-b-2 data-[state=active]:border-blue-600 rounded-none h-full text-xs font-semibold px-1"
+                className="data-[state=active]:bg-transparent data-[state=active]:shadow-none data-[state=active]:border-b-2 data-[state=active]:border-[#ec3013] rounded-none h-full text-xs font-semibold px-1"
               >
                 Overview
               </TabsTrigger>
               <TabsTrigger
                 value="plan"
                 disabled={!planMarkdown}
-                className="data-[state=active]:bg-transparent data-[state=active]:shadow-none data-[state=active]:border-b-2 data-[state=active]:border-blue-600 rounded-none h-full text-xs font-semibold px-1"
+                className="data-[state=active]:bg-transparent data-[state=active]:shadow-none data-[state=active]:border-b-2 data-[state=active]:border-[#ec3013] rounded-none h-full text-xs font-semibold px-1"
               >
                 Plan
               </TabsTrigger>
               <TabsTrigger
                 value="diffs"
                 disabled={!run || !run.diffs || run.diffs.length === 0}
-                className="data-[state=active]:bg-transparent data-[state=active]:shadow-none data-[state=active]:border-b-2 data-[state=active]:border-blue-600 rounded-none h-full text-xs font-semibold px-1"
+                className="data-[state=active]:bg-transparent data-[state=active]:shadow-none data-[state=active]:border-b-2 data-[state=active]:border-[#ec3013] rounded-none h-full text-xs font-semibold px-1"
               >
                 Code Changes ({run?.diffs?.length || 0})
               </TabsTrigger>
               <TabsTrigger
                 value="timeline"
                 disabled={activityEvents.length === 0}
-                className="data-[state=active]:bg-transparent data-[state=active]:shadow-none data-[state=active]:border-b-2 data-[state=active]:border-blue-600 rounded-none h-full text-xs font-semibold px-1"
+                className="data-[state=active]:bg-transparent data-[state=active]:shadow-none data-[state=active]:border-b-2 data-[state=active]:border-[#ec3013] rounded-none h-full text-xs font-semibold px-1"
               >
                 Timeline
               </TabsTrigger>
@@ -414,7 +414,7 @@ export default function CenterPane({
             <TabsContent value="overview" className="m-0 space-y-6">
               {/* Clarification questions panel */}
               {run && run.status === 'awaiting_clarification' && (run.clarification_questions?.length ?? 0) > 0 && (
-                <Card className="border-amber-200 shadow-xs overflow-hidden">
+                <Card className="border-amber-200 shadow-sm overflow-hidden rounded-xl">
                   <ClarificationPanel
                     questions={run.clarification_questions!}
                     isBusy={isBusy}
@@ -439,7 +439,7 @@ export default function CenterPane({
 
               {/* Failure summary if failed */}
               {(ticket.status === 'failed' || (run && (run.status === 'failed' || run.status === 'rejected'))) && (
-                <Card className="bg-rose-50 border-rose-200/60 shadow-xs">
+                <Card className="bg-rose-50 border-rose-200/70 shadow-sm rounded-xl">
                   <CardContent className="p-4 flex gap-3">
                     <AlertTriangle className="text-rose-500 flex-shrink-0 mt-0.5" size={18} />
                     <div className="space-y-1.5 min-w-0 flex-1">
@@ -468,18 +468,18 @@ export default function CenterPane({
 
               {/* Description */}
               <div className="space-y-1.5">
-                <h3 className="text-xs font-bold text-slate-400 tracking-wider uppercase">Description</h3>
-                <p className="text-xs text-slate-600 leading-relaxed font-medium bg-slate-50/50 p-3 rounded-lg border border-slate-100">
+                <h3 className="text-xs font-bold text-neutral-400 tracking-wider uppercase">Description</h3>
+                <p className="text-xs text-neutral-600 leading-relaxed font-medium bg-neutral-50 p-3 rounded-xl border border-neutral-100">
                   {ticket.description || 'No description provided.'}
                 </p>
               </div>
 
               {/* Acceptance Criteria Checklist */}
               <div className="space-y-1.5">
-                <h3 className="text-xs font-bold text-slate-400 tracking-wider uppercase">Acceptance Criteria</h3>
-                <div className="space-y-2 bg-slate-50/50 p-3 rounded-lg border border-slate-100">
+                <h3 className="text-xs font-bold text-neutral-400 tracking-wider uppercase">Acceptance Criteria</h3>
+                <div className="space-y-2 bg-neutral-50 p-3 rounded-xl border border-neutral-100">
                   {criteriaTexts.length === 0 ? (
-                    <p className="text-xs text-slate-400 italic">
+                    <p className="text-xs text-neutral-400 italic">
                       Acceptance criteria will be generated during planning.
                     </p>
                   ) : (
@@ -489,12 +489,12 @@ export default function CenterPane({
                           id={`criteria-${idx}`}
                           checked={isCompleted}
                           disabled
-                          className="mt-0.5 text-blue-600 border-slate-300"
+                          className="mt-0.5 text-[#ec3013] border-neutral-300"
                         />
                         <label
                           htmlFor={`criteria-${idx}`}
                           className={`text-xs leading-normal font-medium ${
-                            isCompleted ? 'text-green-600 font-semibold' : 'text-slate-600'
+                            isCompleted ? 'text-emerald-600 font-semibold' : 'text-neutral-600'
                           }`}
                         >
                           {text}
@@ -527,8 +527,8 @@ export default function CenterPane({
 
               {/* Affected Files List */}
               <div className="space-y-1.5">
-                <h3 className="text-xs font-bold text-slate-400 tracking-wider uppercase">Files Affected</h3>
-                <div className="bg-slate-50/50 p-3 rounded-lg border border-slate-100">
+                <h3 className="text-xs font-bold text-neutral-400 tracking-wider uppercase">Files Affected</h3>
+                <div className="bg-neutral-50 p-3 rounded-xl border border-neutral-100">
                   {renderFilesList()}
                 </div>
               </div>
@@ -536,48 +536,48 @@ export default function CenterPane({
 
             <TabsContent value="plan" className="m-0">
               {planMarkdown ? (
-                <article className="prose prose-sm prose-slate max-w-none select-text
-                  prose-headings:font-bold prose-headings:text-slate-800
+                <article className="prose prose-sm prose-neutral max-w-none select-text
+                  prose-headings:font-bold prose-headings:text-neutral-800
                   prose-h1:text-base prose-h2:text-sm prose-h3:text-xs
-                  prose-p:text-xs prose-p:text-slate-600 prose-p:leading-relaxed
-                  prose-li:text-xs prose-li:text-slate-600
-                  prose-code:text-[11px] prose-code:bg-slate-100 prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-code:text-slate-700 prose-code:font-mono prose-code:before:content-none prose-code:after:content-none
-                  prose-pre:bg-slate-950 prose-pre:text-slate-100 prose-pre:text-[11px] prose-pre:rounded-lg prose-pre:overflow-x-auto
-                  prose-table:text-xs prose-th:text-xs prose-th:font-semibold prose-th:text-slate-700 prose-td:text-xs prose-td:text-slate-600
-                  prose-a:text-blue-600 prose-a:no-underline hover:prose-a:underline
-                  prose-blockquote:border-blue-300 prose-blockquote:text-slate-500 prose-blockquote:text-xs
-                  prose-strong:text-slate-800 prose-strong:font-semibold
+                  prose-p:text-xs prose-p:text-neutral-600 prose-p:leading-relaxed
+                  prose-li:text-xs prose-li:text-neutral-600
+                  prose-code:text-[11px] prose-code:bg-neutral-100 prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-code:text-neutral-700 prose-code:font-mono prose-code:before:content-none prose-code:after:content-none
+                  prose-pre:bg-neutral-900 prose-pre:text-neutral-100 prose-pre:text-[11px] prose-pre:rounded-xl prose-pre:overflow-x-auto
+                  prose-table:text-xs prose-th:text-xs prose-th:font-semibold prose-th:text-neutral-700 prose-td:text-xs prose-td:text-neutral-600
+                  prose-a:text-[#ec3013] prose-a:no-underline hover:prose-a:underline
+                  prose-blockquote:border-[#ffc4b8] prose-blockquote:text-neutral-500 prose-blockquote:text-xs
+                  prose-strong:text-neutral-800 prose-strong:font-semibold
                 ">
                   <ReactMarkdown remarkPlugins={[remarkGfm]}>
                     {planMarkdown}
                   </ReactMarkdown>
                 </article>
               ) : (
-                <p className="text-xs text-slate-400 italic">No plan document available.</p>
+                <p className="text-xs text-neutral-400 italic">No plan document available.</p>
               )}
             </TabsContent>
 
             <TabsContent value="diffs" className="m-0 space-y-4">
               {run?.diffs && run.diffs.map((diffItem, index) => (
-                <Card key={index} className="border-slate-200 overflow-hidden bg-slate-950 font-mono text-[11px] shadow-sm">
+                <Card key={index} className="border-neutral-800 overflow-hidden bg-neutral-950 font-mono text-[11px] shadow-sm rounded-xl">
                   {/* Diff file header */}
-                  <div className="px-4 py-2 bg-slate-900 border-b border-slate-800 text-slate-300 flex items-center justify-between font-sans">
+                  <div className="px-4 py-2 bg-neutral-900 border-b border-neutral-800 text-neutral-300 flex items-center justify-between font-sans">
                     <span className="font-semibold text-xs flex items-center gap-1.5">
-                      <FileCode size={13} className="text-blue-400" />
+                      <FileCode size={13} className="text-[#ff9783]" />
                       {diffItem.path}
                     </span>
                   </div>
                   {/* Scrollable diff lines */}
                   <CardContent className="p-3 overflow-x-auto text-left leading-normal select-text">
-                    <pre className="text-slate-100 leading-5">
+                    <pre className="text-neutral-100 leading-5">
                       {diffItem.diff.split('\n').map((line: string, i: number) => {
-                        let lineClass = 'text-slate-400';
+                        let lineClass = 'text-neutral-400';
                         if (line.startsWith('+') && !line.startsWith('+++')) {
                           lineClass = 'text-emerald-400 bg-emerald-950/20 font-medium border-l-2 border-emerald-500 pl-1 -ml-1';
                         } else if (line.startsWith('-') && !line.startsWith('---')) {
                           lineClass = 'text-rose-400 bg-rose-950/20 font-medium border-l-2 border-rose-500 pl-1 -ml-1';
                         } else if (line.startsWith('@@')) {
-                          lineClass = 'text-indigo-400 font-bold';
+                          lineClass = 'text-[#ff9783] font-bold';
                         }
                         return (
                           <div key={i} className={`${lineClass} whitespace-pre`}>
@@ -604,21 +604,21 @@ export default function CenterPane({
 
       {/* Action Errors */}
       {actionError && (
-        <div className="mx-6 mb-2 text-xs font-semibold text-rose-500 bg-rose-50 border border-rose-200 p-2 rounded-lg flex gap-2">
+        <div className="mx-6 mb-2 text-xs font-semibold text-rose-600 bg-rose-50 border border-rose-200 p-2 rounded-lg flex gap-2">
           <AlertCircle size={14} className="flex-shrink-0 mt-0.5" />
           <span>{actionError}</span>
         </div>
       )}
 
       {/* Bottom control actions footer */}
-      <div className="p-4 border-t border-slate-100 bg-slate-50/30 flex items-center justify-between gap-3">
+      <div className="p-4 border-t border-neutral-100 bg-neutral-50/50 flex items-center justify-between gap-3">
         {/* Restart/Revert Button */}
         {run && (
           <Button
             onClick={() => setIsRevertOpen(true)}
             variant="outline"
             disabled={isBusy || reverting || merging}
-            className="border-slate-200 hover:bg-rose-50 hover:text-rose-600 hover:border-rose-200 text-xs font-semibold h-10 px-4 flex items-center gap-1.5 flex-shrink-0"
+            className="border-neutral-200 hover:bg-rose-50 hover:text-rose-600 hover:border-rose-200 text-xs font-semibold h-10 px-4 flex items-center gap-1.5 flex-shrink-0 rounded-lg"
           >
             <RotateCcw size={14} />
             <span>Restart</span>
@@ -631,7 +631,7 @@ export default function CenterPane({
             onClick={() => setIsRejectOpen(true)}
             variant="outline"
             disabled={isBusy}
-            className="border-rose-200 bg-rose-50/50 hover:bg-rose-50 hover:text-rose-600 text-rose-500 text-xs font-semibold h-10 px-4 flex items-center gap-1.5"
+            className="border-rose-200 bg-rose-50/60 hover:bg-rose-50 hover:text-rose-600 text-rose-500 text-xs font-semibold h-10 px-4 flex items-center gap-1.5 rounded-lg"
           >
             <XCircle size={14} />
             <span>Reject Plan</span>
@@ -642,12 +642,12 @@ export default function CenterPane({
         <div className="flex-1 flex gap-2 justify-end items-center">
           {/* Auto-approve toggle — only before a run exists */}
           {!run && (
-            <label className="flex items-center gap-1.5 text-[11px] text-slate-500 cursor-pointer select-none mr-1" title="Skip the Review & Approve gate and go straight to development">
+            <label className="flex items-center gap-1.5 text-[11px] text-neutral-500 cursor-pointer select-none mr-1" title="Skip the Review & Approve gate and go straight to development">
               <input
                 type="checkbox"
                 checked={autoApprove}
                 onChange={(e) => setAutoApprove(e.target.checked)}
-                className="rounded border-slate-300"
+                className="rounded border-neutral-300"
               />
               Auto-approve
             </label>
@@ -657,7 +657,7 @@ export default function CenterPane({
             <Button
               onClick={() => setIsMergeOpen(true)}
               disabled={isBusy || merging}
-              className="bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs h-10 px-4 flex items-center gap-1.5 shadow-sm"
+              className="bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs h-10 px-4 flex items-center gap-1.5 shadow-sm rounded-lg"
             >
               <GitBranch size={14} />
               <span>Merge to Base</span>
@@ -667,10 +667,10 @@ export default function CenterPane({
           <Button
             onClick={executePrimaryAction}
             disabled={isBusy || reverting || merging || !!run?.is_running}
-            className={`min-w-[120px] text-white font-semibold text-xs h-10 px-4 flex items-center justify-center gap-1.5 shadow-sm ${
+            className={`min-w-[120px] text-white font-semibold text-xs h-10 px-4 flex items-center justify-center gap-1.5 shadow-sm rounded-lg ${
               run?.status === 'awaiting_approval'
-                ? 'bg-indigo-600 hover:bg-indigo-500'
-                : 'bg-blue-600 hover:bg-blue-500'
+                ? 'bg-[#ae1800] hover:bg-[#7c1405]'
+                : 'bg-[#ec3013] hover:bg-[#dd2b0f]'
             }`}
           >
             {!(isBusy || reverting || merging) && (run?.status === 'awaiting_approval' ? <CheckCircle size={14} /> : <Play size={12} />)}
@@ -682,10 +682,10 @@ export default function CenterPane({
       {/* dialogs */}
       {/* Workspace approval modal */}
       <Dialog open={isApproveOpen} onOpenChange={setIsApproveOpen}>
-        <DialogContent className="sm:max-w-[480px] bg-slate-900 border-slate-800 text-slate-100">
+        <DialogContent className="sm:max-w-[480px] bg-white border-neutral-200 text-neutral-900 rounded-xl shadow-lg">
           <DialogHeader>
-            <DialogTitle className="text-white text-base">Plan Approved: Select Workspace Mode</DialogTitle>
-            <DialogDescription className="text-slate-400 text-xs">
+            <DialogTitle className="text-neutral-900 text-base">Plan Approved: Select Workspace Mode</DialogTitle>
+            <DialogDescription className="text-neutral-500 text-xs">
               Choose how the developer agent should implement the code modifications in your target project.
             </DialogDescription>
           </DialogHeader>
@@ -695,17 +695,17 @@ export default function CenterPane({
             <button
               type="button"
               onClick={() => handleApproveSubmit('worktree')}
-              className="w-full text-left p-4 rounded-xl border-2 border-blue-500 bg-blue-950/20 hover:bg-blue-950/30 transition-all flex items-start gap-4 ring-1 ring-blue-500/10 cursor-pointer"
+              className="w-full text-left p-4 rounded-xl border-2 border-[#ec3013] bg-[#fff2ef] hover:bg-[#ffe0d9]/60 transition-all flex items-start gap-4 ring-1 ring-[#ec3013]/10 cursor-pointer"
             >
-              <div className="bg-blue-500/20 p-2.5 rounded-lg text-blue-400 flex-shrink-0">
+              <div className="bg-[#ffe0d9] p-2.5 rounded-lg text-[#ec3013] flex-shrink-0">
                 <GitBranch size={20} />
               </div>
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2">
-                  <h4 className="text-xs font-bold text-white leading-normal">Create Work-Tree</h4>
-                  <span className="bg-blue-600 text-white font-bold text-[8px] tracking-wide px-1.5 py-0.5 rounded uppercase">Recommended</span>
+                  <h4 className="text-xs font-bold text-neutral-900 leading-normal">Create Work-Tree</h4>
+                  <span className="bg-[#ec3013] text-white font-bold text-[8px] tracking-wide px-1.5 py-0.5 rounded uppercase">Recommended</span>
                 </div>
-                <p className="text-[10px] text-slate-400 mt-1 leading-normal">
+                <p className="text-[10px] text-neutral-500 mt-1 leading-normal">
                   Runs the agent in an isolated Git worktree. Keeps your working checkout clean, prevents lock conflicts, and allows parallel tasks.
                 </p>
               </div>
@@ -715,14 +715,14 @@ export default function CenterPane({
             <button
               type="button"
               onClick={() => handleApproveSubmit('in_place')}
-              className="w-full text-left p-4 rounded-xl border border-slate-800 bg-slate-950/40 hover:bg-slate-950/60 transition-all flex items-start gap-4 cursor-pointer"
+              className="w-full text-left p-4 rounded-xl border border-neutral-200 bg-neutral-50 hover:bg-neutral-100 transition-all flex items-start gap-4 cursor-pointer"
             >
-              <div className="bg-slate-800 p-2.5 rounded-lg text-slate-400 flex-shrink-0">
+              <div className="bg-neutral-200 p-2.5 rounded-lg text-neutral-500 flex-shrink-0">
                 <FileCode size={20} />
               </div>
               <div className="min-w-0 flex-1">
-                <h4 className="text-xs font-bold text-slate-200 leading-normal">Edit Current Codebase</h4>
-                <p className="text-[10px] text-slate-400 mt-1 leading-normal">
+                <h4 className="text-xs font-bold text-neutral-800 leading-normal">Edit Current Codebase</h4>
+                <p className="text-[10px] text-neutral-500 mt-1 leading-normal">
                   Applies changes directly in-place to your active branch. Best for rapid local edits without worktree environment setup.
                 </p>
               </div>
@@ -733,7 +733,7 @@ export default function CenterPane({
               type="button"
               variant="outline"
               onClick={() => setIsApproveOpen(false)}
-              className="border-slate-800 hover:bg-slate-800 text-slate-300 text-xs"
+              className="border-neutral-200 hover:bg-neutral-100 text-neutral-600 text-xs rounded-lg"
             >
               Cancel
             </Button>
@@ -743,10 +743,10 @@ export default function CenterPane({
 
       {/* Reject FeedBack Modal */}
       <Dialog open={isRejectOpen} onOpenChange={setIsRejectOpen}>
-        <DialogContent className="sm:max-w-[450px] bg-slate-900 border-slate-800 text-slate-100">
+        <DialogContent className="sm:max-w-[450px] bg-white border-neutral-200 text-neutral-900 rounded-xl shadow-lg">
           <DialogHeader>
-            <DialogTitle className="text-white text-base">Reject Implementation Plan</DialogTitle>
-            <DialogDescription className="text-slate-400 text-xs">
+            <DialogTitle className="text-neutral-900 text-base">Reject Implementation Plan</DialogTitle>
+            <DialogDescription className="text-neutral-500 text-xs">
               Provide specific feedback or modification instructions to guide the planner to redesign the plan.
             </DialogDescription>
           </DialogHeader>
@@ -755,7 +755,7 @@ export default function CenterPane({
               placeholder="e.g. Please avoid modifying utility classes, use the existing helpers in services layer instead..."
               value={rejectFeedback}
               onChange={(e) => setRejectFeedback(e.target.value)}
-              className="bg-slate-950 border-slate-800 text-slate-100 placeholder:text-slate-600 focus-visible:ring-blue-500 text-xs min-h-[100px]"
+              className="bg-white border-neutral-200 text-neutral-900 placeholder:text-neutral-400 rounded-lg focus-visible:ring-[#ec3013] text-xs min-h-[100px]"
             />
           </div>
           <DialogFooter>
@@ -763,13 +763,13 @@ export default function CenterPane({
               type="button"
               variant="outline"
               onClick={() => setIsRejectOpen(false)}
-              className="border-slate-800 hover:bg-slate-800 text-slate-300 text-xs"
+              className="border-neutral-200 hover:bg-neutral-100 text-neutral-600 text-xs rounded-lg"
             >
               Cancel
             </Button>
             <Button
               onClick={handleRejectSubmit}
-              className="bg-rose-600 hover:bg-rose-500 text-white font-semibold text-xs"
+              className="bg-rose-600 hover:bg-rose-500 text-white font-semibold text-xs rounded-lg shadow-sm"
             >
               Reject Plan
             </Button>
@@ -779,10 +779,10 @@ export default function CenterPane({
 
       {/* Revert Warning Modal */}
       <Dialog open={isRevertOpen} onOpenChange={setIsRevertOpen}>
-        <DialogContent className="sm:max-w-[400px] bg-slate-900 border-slate-800 text-slate-100">
+        <DialogContent className="sm:max-w-[400px] bg-white border-neutral-200 text-neutral-900 rounded-xl shadow-lg">
           <DialogHeader>
-            <DialogTitle className="text-white text-base">Revert and Restart Task?</DialogTitle>
-            <DialogDescription className="text-slate-400 text-xs leading-normal">
+            <DialogTitle className="text-neutral-900 text-base">Revert and Restart Task?</DialogTitle>
+            <DialogDescription className="text-neutral-500 text-xs leading-normal">
               This will discard all AI-generated code changes, delete the active workspace/branch, and completely restart the agent pipeline from scratch.
             </DialogDescription>
           </DialogHeader>
@@ -791,13 +791,13 @@ export default function CenterPane({
               type="button"
               variant="outline"
               onClick={() => setIsRevertOpen(false)}
-              className="border-slate-800 hover:bg-slate-800 text-slate-300 text-xs"
+              className="border-neutral-200 hover:bg-neutral-100 text-neutral-600 text-xs rounded-lg"
             >
               Cancel
             </Button>
             <Button
               onClick={handleRevertSubmit}
-              className="bg-rose-600 hover:bg-rose-500 text-white font-semibold text-xs"
+              className="bg-rose-600 hover:bg-rose-500 text-white font-semibold text-xs rounded-lg shadow-sm"
             >
               Revert & Restart
             </Button>
@@ -807,10 +807,10 @@ export default function CenterPane({
 
       {/* Merge to base Modal */}
       <Dialog open={isMergeOpen} onOpenChange={setIsMergeOpen}>
-        <DialogContent className="sm:max-w-[400px] bg-slate-900 border-slate-800 text-slate-100">
+        <DialogContent className="sm:max-w-[400px] bg-white border-neutral-200 text-neutral-900 rounded-xl shadow-lg">
           <DialogHeader>
-            <DialogTitle className="text-white text-base">Merge Changes into Base Branch?</DialogTitle>
-            <DialogDescription className="text-slate-400 text-xs leading-normal">
+            <DialogTitle className="text-neutral-900 text-base">Merge Changes into Base Branch?</DialogTitle>
+            <DialogDescription className="text-neutral-500 text-xs leading-normal">
               Merge the developer agent worktree branch back into your project&apos;s base branch.
             </DialogDescription>
           </DialogHeader>
@@ -819,13 +819,13 @@ export default function CenterPane({
               type="button"
               variant="outline"
               onClick={() => setIsMergeOpen(false)}
-              className="border-slate-800 hover:bg-slate-800 text-slate-300 text-xs"
+              className="border-neutral-200 hover:bg-neutral-100 text-neutral-600 text-xs rounded-lg"
             >
               Cancel
             </Button>
             <Button
               onClick={handleMergeSubmit}
-              className="bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs"
+              className="bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs rounded-lg shadow-sm"
             >
               Merge Branch
             </Button>

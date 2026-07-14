@@ -172,28 +172,28 @@ export default function Sidebar({
   };
 
   return (
-    <aside className="w-60 bg-slate-950 text-slate-200 border-r border-slate-900 flex flex-col justify-between select-none">
+    <aside className="w-60 bg-[#201e1d] text-white/70 flex flex-col justify-between select-none">
       <div className="flex flex-col flex-1 min-h-0">
         {/* Brand Header */}
-        <div className="h-16 px-6 border-b border-slate-900/50 flex items-center gap-3">
-          <div className="bg-blue-600/20 p-2 rounded-lg text-blue-400">
-            <Compass size={18} className="animate-spin-slow" />
+        <div className="h-16 px-5 flex items-center gap-2.5 border-b border-white/8">
+          <div className="bg-[#ec3013] p-2 rounded-[9px] text-white shadow-[0_2px_8px_rgba(236,48,19,.35)]">
+            <Compass size={18} />
           </div>
           <div>
-            <h1 className="font-bold text-sm text-white tracking-wide">CodeFlow Agent</h1>
-            <p className="text-[10px] text-slate-500 font-medium">Orchestration Web Console</p>
+            <h1 className="font-extrabold text-sm text-white tracking-tight">CodeFlow Agent</h1>
+            <p className="text-[10px] text-white/40 font-semibold uppercase tracking-wider">Orchestration Console</p>
           </div>
         </div>
 
         {/* Scrollable Navigation */}
-        <div className="flex-1 overflow-y-auto px-3 py-4 space-y-6 scrollbar-thin scrollbar-thumb-slate-900">
+        <div className="flex-1 overflow-y-auto px-3 py-4 space-y-6">
           {/* Projects Section */}
           <div className="space-y-1">
             <div className="flex items-center justify-between px-3 mb-2">
-              <span className="text-[10px] font-bold text-slate-500 tracking-wider">PROJECTS</span>
+              <span className="text-[9px] font-bold text-white/40 tracking-wider">PROJECTS</span>
               <button
                 onClick={() => setIsDialogOpen(true)}
-                className="text-slate-500 hover:text-white transition-colors"
+                className="text-white/40 hover:text-white transition-colors rounded-md p-0.5"
                 title="Add project"
               >
                 <Plus size={14} />
@@ -202,7 +202,7 @@ export default function Sidebar({
 
             <div className="space-y-0.5">
               {projects.length === 0 ? (
-                <div className="px-3 py-2 text-xs text-slate-500 italic">No projects loaded</div>
+                <div className="px-3 py-2 text-xs text-white/30 italic">No projects loaded</div>
               ) : (
                 projects.map((proj) => {
                   const isSelected = proj.id === selectedProjectId;
@@ -210,26 +210,22 @@ export default function Sidebar({
                     <div
                       key={proj.id}
                       className={`group w-full flex items-center gap-1 rounded-lg transition-all ${
-                        isSelected
-                          ? 'bg-slate-900 shadow-sm ring-1 ring-white/5'
-                          : 'hover:bg-slate-900/40'
+                        isSelected ? 'bg-white/8' : 'hover:bg-white/5'
                       }`}
                     >
                       <button
                         onClick={() => onSelectProject(proj.id)}
                         className={`flex-1 min-w-0 flex items-center gap-2.5 px-3 py-2 text-xs font-medium transition-all text-left ${
-                          isSelected
-                            ? 'text-white font-semibold'
-                            : 'text-slate-400 group-hover:text-slate-200'
+                          isSelected ? 'text-white font-semibold' : 'text-white/60 group-hover:text-white/90'
                         }`}
                       >
-                        <Folder size={14} className={isSelected ? 'text-blue-400' : 'text-slate-500'} />
+                        <Folder size={14} className={isSelected ? 'text-[#ff9783]' : 'text-white/35'} />
                         <span className="truncate">{proj.name}</span>
                       </button>
                       <button
                         type="button"
                         onClick={(e) => handleRemoveProject(e, proj.id, proj.name)}
-                        className="opacity-0 group-hover:opacity-100 focus:opacity-100 p-1.5 mr-1 rounded-md text-slate-500 hover:text-rose-400 hover:bg-rose-950/30 transition-all"
+                        className="opacity-0 group-hover:opacity-100 focus:opacity-100 p-1.5 mr-1 rounded-md text-white/40 hover:text-rose-400 hover:bg-rose-500/10 transition-all"
                         title="Remove project"
                       >
                         <Trash2 size={12} />
@@ -244,7 +240,7 @@ export default function Sidebar({
           {/* Workflows Section */}
           <div className="space-y-1">
             <div className="px-3 mb-2">
-              <span className="text-[10px] font-bold text-slate-500 tracking-wider">WORKFLOWS</span>
+              <span className="text-[9px] font-bold text-white/40 tracking-wider">WORKFLOWS</span>
             </div>
 
             <div className="space-y-0.5">
@@ -259,11 +255,11 @@ export default function Sidebar({
                   onClick={() => onSelectWorkflow(id)}
                   className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs font-medium transition-all text-left ${
                     activeWorkflow === id
-                      ? 'bg-slate-900 text-white shadow-sm ring-1 ring-white/5 font-semibold'
-                      : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900/40'
+                      ? 'bg-white/8 text-white font-semibold'
+                      : 'text-white/60 hover:text-white/90 hover:bg-white/5'
                   }`}
                 >
-                  <span className={activeWorkflow === id ? 'text-blue-400' : 'text-slate-500'}>
+                  <span className={activeWorkflow === id ? 'text-[#ff9783]' : 'text-white/35'}>
                     {icon}
                   </span>
                   <span>{id}</span>
@@ -285,9 +281,9 @@ export default function Sidebar({
       </div>
 
       {/* Profile Section at Bottom */}
-      <div className="p-4 border-t border-slate-900 flex items-center justify-between gap-3 bg-slate-950/40">
+      <div className="p-4 border-t border-white/8 flex items-center justify-between gap-3">
         <div className="flex items-center gap-2.5 min-w-0">
-          <div className="w-8 h-8 rounded-full border border-slate-800 overflow-hidden flex-shrink-0 bg-slate-800">
+          <div className="w-8 h-8 rounded-full overflow-hidden flex-shrink-0 bg-white/10">
             <img
               src="https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=80&auto=format&fit=crop&q=80"
               alt="Avatar"
@@ -296,16 +292,16 @@ export default function Sidebar({
           </div>
           <div className="min-w-0">
             <p className="text-xs font-semibold text-white truncate">Leo Elstin</p>
-            <p className="text-[10px] text-green-500 flex items-center gap-1 font-medium">
-              <span className="w-1.5 h-1.5 rounded-full bg-green-500 inline-block animate-pulse"></span>
+            <p className="text-[10px] text-emerald-400 flex items-center gap-1 font-medium">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 inline-block animate-pulse"></span>
               Online
             </p>
           </div>
         </div>
         <button
           onClick={() => onSelectWorkflow('Settings')}
-          className={`p-1.5 rounded-lg transition-colors hover:bg-slate-900 ${
-            activeWorkflow === 'Settings' ? 'text-white bg-slate-900' : 'text-slate-400 hover:text-slate-200'
+          className={`p-1.5 rounded-lg transition-colors hover:bg-white/8 ${
+            activeWorkflow === 'Settings' ? 'text-white bg-white/8' : 'text-white/50 hover:text-white/80'
           }`}
           title="Settings"
         >
@@ -315,17 +311,17 @@ export default function Sidebar({
 
       {/* Add Project Dialog */}
       <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-        <DialogContent className="sm:max-w-[425px] bg-slate-900 border-slate-800 text-slate-100">
+        <DialogContent className="sm:max-w-[425px] bg-white border-neutral-200 text-neutral-900 rounded-xl shadow-lg">
           <form onSubmit={handleAddSubmit}>
             <DialogHeader>
-              <DialogTitle className="text-white text-base">Add Project</DialogTitle>
-              <DialogDescription className="text-slate-400 text-xs">
+              <DialogTitle className="text-neutral-900 text-base">Add Project</DialogTitle>
+              <DialogDescription className="text-neutral-500 text-xs">
                 Select or enter the absolute path to your local Flutter or Dart project directory.
               </DialogDescription>
             </DialogHeader>
             <div className="grid gap-4 py-4">
               <div className="flex flex-col gap-1.5">
-                <label className="text-[11px] font-bold text-slate-400 tracking-wide uppercase">
+                <label className="text-[11px] font-bold text-neutral-500 tracking-wide uppercase">
                   Project Name (Optional)
                 </label>
                 <Input
@@ -333,11 +329,11 @@ export default function Sidebar({
                   placeholder="e.g. My Flutter App"
                   value={projectName}
                   onChange={(e) => setProjectName(e.target.value)}
-                  className="bg-slate-950 border-slate-800 text-slate-100 placeholder:text-slate-600 focus-visible:ring-blue-500"
+                  className="bg-white border-neutral-200 text-neutral-900 placeholder:text-neutral-400 rounded-lg focus-visible:ring-[#ec3013]"
                 />
               </div>
               <div className="flex flex-col gap-1.5">
-                <label className="text-[11px] font-bold text-slate-400 tracking-wide uppercase">
+                <label className="text-[11px] font-bold text-neutral-500 tracking-wide uppercase">
                   Absolute Path
                 </label>
                 <div className="flex gap-2">
@@ -346,27 +342,27 @@ export default function Sidebar({
                     placeholder="/Users/leo.e/dev/my-flutter-app"
                     value={projectPath}
                     onChange={(e) => setProjectPath(e.target.value)}
-                    className="bg-slate-950 border-slate-800 text-slate-100 placeholder:text-slate-600 focus-visible:ring-blue-500 font-mono text-xs"
+                    className="bg-white border-neutral-200 text-neutral-900 placeholder:text-neutral-400 rounded-lg focus-visible:ring-[#ec3013] font-mono text-xs"
                   />
                   <Button
                     type="button"
                     variant="outline"
                     onClick={handlePickFolder}
                     disabled={isPickingFolder || isAddingProject}
-                    className="border-slate-800 hover:bg-slate-800 hover:text-slate-100 shrink-0 px-3 gap-1.5 text-xs font-semibold"
+                    className="border-neutral-200 hover:bg-neutral-100 hover:text-neutral-900 shrink-0 px-3 gap-1.5 text-xs font-semibold rounded-lg"
                     title="Browse for folder"
                   >
                     <FolderOpen size={14} className={isPickingFolder ? 'animate-pulse' : ''} />
                     <span>{isPickingFolder ? 'Picking...' : 'Browse'}</span>
                   </Button>
                 </div>
-                <p className="text-[10px] text-slate-500">
+                <p className="text-[10px] text-neutral-400">
                   Must be a valid filesystem path containing a{' '}
-                  <code className="text-slate-400">pubspec.yaml</code>.
+                  <code className="text-neutral-600">pubspec.yaml</code>.
                 </p>
               </div>
               {error && (
-                <div className="text-xs text-red-400 font-medium bg-red-950/20 border border-red-900/40 p-2 rounded-lg">
+                <div className="text-xs text-rose-600 font-medium bg-rose-50 border border-rose-200 p-2 rounded-lg">
                   {error}
                 </div>
               )}
@@ -376,14 +372,14 @@ export default function Sidebar({
                 type="button"
                 variant="outline"
                 onClick={() => setIsDialogOpen(false)}
-                className="border-slate-800 hover:bg-slate-800 hover:text-slate-100"
+                className="border-neutral-200 hover:bg-neutral-100 hover:text-neutral-900 rounded-lg"
               >
                 Cancel
               </Button>
               <Button
                 type="submit"
                 disabled={isAddingProject}
-                className="bg-blue-600 hover:bg-blue-500 text-white font-semibold"
+                className="bg-[#ec3013] hover:bg-[#dd2b0f] text-white font-semibold rounded-lg shadow-sm"
               >
                 {isAddingProject ? 'Adding...' : 'Add Project'}
               </Button>
@@ -394,21 +390,21 @@ export default function Sidebar({
 
       {/* New PO Context Dialog */}
       <Dialog open={isNewContextOpen} onOpenChange={setIsNewContextOpen}>
-        <DialogContent className="sm:max-w-[480px] bg-slate-900 border-slate-800 text-slate-100">
+        <DialogContent className="sm:max-w-[480px] bg-white border-neutral-200 text-neutral-900 rounded-xl shadow-lg">
           <form onSubmit={handleNewPOSession}>
             <DialogHeader>
-              <DialogTitle className="text-white text-base flex items-center gap-2">
-                <ClipboardList size={16} className="text-indigo-400" />
+              <DialogTitle className="text-neutral-900 text-base flex items-center gap-2">
+                <ClipboardList size={16} className="text-[#ec3013]" />
                 New PO Session
               </DialogTitle>
-              <DialogDescription className="text-slate-400 text-xs">
+              <DialogDescription className="text-neutral-500 text-xs">
                 Describe a feature idea or request. The PO agent will ask clarifying questions and
                 generate user stories.
               </DialogDescription>
             </DialogHeader>
             <div className="py-4">
               <div className="flex flex-col gap-1.5">
-                <label className="text-[11px] font-bold text-slate-400 tracking-wide uppercase">
+                <label className="text-[11px] font-bold text-neutral-500 tracking-wide uppercase">
                   Initial Context
                 </label>
                 <textarea
@@ -416,11 +412,11 @@ export default function Sidebar({
                   value={contextInput}
                   onChange={(e) => setContextInput(e.target.value)}
                   rows={4}
-                  className="w-full resize-none rounded-lg border border-slate-800 bg-slate-950 text-slate-100 placeholder:text-slate-600 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  className="w-full resize-none rounded-lg border border-neutral-200 bg-white text-neutral-900 placeholder:text-neutral-400 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#ec3013]"
                 />
               </div>
               {poError && (
-                <div className="mt-2 text-xs text-red-400 font-medium bg-red-950/20 border border-red-900/40 p-2 rounded-lg">
+                <div className="mt-2 text-xs text-rose-600 font-medium bg-rose-50 border border-rose-200 p-2 rounded-lg">
                   {poError}
                 </div>
               )}
@@ -430,14 +426,14 @@ export default function Sidebar({
                 type="button"
                 variant="outline"
                 onClick={() => setIsNewContextOpen(false)}
-                className="border-slate-800 hover:bg-slate-800 hover:text-slate-100"
+                className="border-neutral-200 hover:bg-neutral-100 hover:text-neutral-900 rounded-lg"
               >
                 Cancel
               </Button>
               <Button
                 type="submit"
                 disabled={isStartingSession}
-                className="bg-indigo-600 hover:bg-indigo-500 text-white font-semibold"
+                className="bg-[#ec3013] hover:bg-[#dd2b0f] text-white font-semibold rounded-lg shadow-sm"
               >
                 {isStartingSession ? 'Starting...' : 'Start Session'}
               </Button>
