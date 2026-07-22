@@ -21,6 +21,7 @@ import CenterPane from '@/components/CenterPane';
 import EpicRunPanel from '@/components/EpicRunPanel';
 import SettingsScreen from '@/components/SettingsScreen';
 import AgentLogsView from '@/components/AgentLogsView';
+import SimulatorView from '@/components/SimulatorView';
 import { classifyIssueType } from '@/lib/jira-hierarchy';
 import { Toaster, toast } from 'sonner';
 
@@ -703,6 +704,9 @@ export default function Home() {
             onClear={handleClearActivityLogs}
             onStop={handleStopWatchingRun}
           />
+        ) : activeWorkflow === 'Simulator' ? (
+          /* Full Simulator Screen */
+          <SimulatorView />
         ) : (
           /* Main Multi-Pane View (All Tickets / My Tasks) */
           <div className="flex-1 relative overflow-hidden min-w-0">
