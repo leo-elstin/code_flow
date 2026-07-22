@@ -124,5 +124,16 @@ class Settings:
     PO_READINESS_THRESHOLD: float = float(os.getenv("PO_READINESS_THRESHOLD", "0.7"))
     PO_RESEARCH_DEPTH_DEFAULT: str = os.getenv("PO_RESEARCH_DEPTH_DEFAULT", "codebase")
 
+    # Simulator view: local iOS Simulator mirror + WebDriverAgent (WDA) automation.
+    # WDA_DIR is where the upstream Appium WebDriverAgent project is auto-cloned
+    # on first use to bootstrap tap/hierarchy support.
+    CODE_AGENT_WDA_DIR: str = os.path.abspath(
+        os.getenv("CODE_AGENT_WDA_DIR", "./data/webdriveragent")
+    )
+    CODE_AGENT_WDA_PORT: int = int(os.getenv("CODE_AGENT_WDA_PORT", "8100"))
+    CODE_AGENT_WDA_BOOTSTRAP_TIMEOUT: int = int(
+        os.getenv("CODE_AGENT_WDA_BOOTSTRAP_TIMEOUT", "150")
+    )
+
 
 settings = Settings()

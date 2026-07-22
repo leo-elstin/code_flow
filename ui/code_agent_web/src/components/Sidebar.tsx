@@ -19,6 +19,7 @@ import {
   Compass,
   Trash2,
   ClipboardList,
+  Smartphone,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -248,6 +249,7 @@ export default function Sidebar({
                 { id: 'My Tasks', icon: <ListTodo size={14} /> },
                 { id: 'All Tickets', icon: <Ticket size={14} /> },
                 { id: 'Agent Logs', icon: <ScrollText size={14} /> },
+                { id: 'Simulator', icon: <Smartphone size={14} /> },
                 { id: 'Settings', icon: <Settings size={14} /> },
               ].map(({ id, icon }) => (
                 <button

@@ -198,3 +198,31 @@ export interface LogEntry {
   isError: boolean;
   isUser: boolean;
 }
+
+export interface SimulatorDevice {
+  udid: string;
+  name: string;
+  state: string;
+  runtime: string;
+}
+
+export interface SimulatorUiElement {
+  index: number;
+  type: string;
+  label?: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export interface SimulatorUiTree {
+  root_width: number;
+  root_height: number;
+  elements: SimulatorUiElement[];
+}
+
+export interface WdaStatus {
+  state: 'not_started' | 'building' | 'ready' | 'failed';
+  error?: string;
+}

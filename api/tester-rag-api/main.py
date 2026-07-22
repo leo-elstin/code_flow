@@ -14,6 +14,7 @@ from app.api.generate import router as generate_router
 from app.api.explorer import router as explorer_router
 from app.api.code_agent import code_agent_projects_router, code_agent_router
 from app.api.po import po_router
+from app.api.simulator import router as simulator_router
 from app.core.config import settings
 from app.core.logging_config import get_logger, setup_logging
 from app.orchestration.epic_runner import reconcile_interrupted_epics
@@ -51,6 +52,7 @@ app.include_router(explorer_router, prefix="/api")
 app.include_router(code_agent_router, prefix="/api/code-agent")
 app.include_router(code_agent_projects_router, prefix="/api/code-agent")
 app.include_router(po_router, prefix="/api/po")
+app.include_router(simulator_router, prefix="/api/simulator")
 
 
 @app.exception_handler(RateLimitError)
