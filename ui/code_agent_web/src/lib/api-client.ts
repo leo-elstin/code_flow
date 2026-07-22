@@ -12,6 +12,9 @@ import {
   JiraStatusCheck,
   EpicRun,
   ClarifyAnswer,
+  SimulatorDevice,
+  SimulatorUiTree,
+  WdaStatus,
 } from './models';
 
 const BASE_URL_KEY = 'code_agent_api_base_url';
@@ -362,5 +365,51 @@ export class CodeAgentApiClient {
       `/api/code-agent/epics?${params.toString()}`
     );
     return data.epic_runs || [];
+  }
+
+  // -- Simulator ---------------------------------------------------------
+
+  static async listSimulatorDevices(): Promise<SimulatorDevice[]> {
+    const data = await this._request<{ devices: SimulatorDevice[] }>('/api/simulator/devices');
+    return data.devices || [];
+  }
+
+  static async bootSimulatorDevice(udid: string): Promise<void> {
+    await this._request<void>(`/api/simulator/devices/${udid}/boot`, {
+      method: 'POST',
+    });
+  }
+
+  /** URL for use directly as an <img src>; not a fetch call. Cache-busted so
+   * each poll tick actually reloads the image instead of hitting the cache. */
+  static getSimulatorScreenshotUrl(udid: string): string {
+    return `${this.getBaseUrl()}/api/simulator/devices/${udid}/screenshot?t=${Date.now()}`;
+  }
+
+  static async startSimulatorWda(udid: string): Promise<WdaStatus> {
+    return this._request<WdaStatus>(`/api/simulator/devices/${udid}/wda/start`, {
+      method: 'POST',
+    });
+  }
+
+  static async getSimulatorWdaStatus(udid: string): Promise<WdaStatus> {
+    return this._request<WdaStatus>(`/api/simulator/devices/${udid}/wda/status`);
+  }
+
+  static async stopSimulatorWda(udid: string): Promise<void> {
+    await this._request<void>(`/api/simulator/devices/${udid}/wda/stop`, {
+      method: 'POST',
+    });
+  }
+
+  static async getSimulatorUiTree(udid: string): Promise<SimulatorUiTree> {
+    return this._request<SimulatorUiTree>(`/api/simulator/devices/${udid}/ui-tree`);
+  }
+
+  static async tapSimulator(udid: string, x: number, y: number): Promise<void> {
+    await this._request<void>(`/api/simulator/devices/${udid}/tap`, {
+      method: 'POST',
+      body: JSON.stringify({ x, y }),
+    });
   }
 }
