@@ -10,7 +10,7 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from jira import JIRA
+from jira import JIRA, JIRAError
 
 from app.core.config import settings
 from app.core.logging_config import get_logger
@@ -61,7 +61,30 @@ class JiraService:
             timeout=settings.CODE_AGENT_JIRA_TIMEOUT,
             max_retries=1,
         )
+        self._verify_auth()
         logger.info("Jira client initialised for %s", settings.JIRA_BASE_URL)
+
+    def _verify_auth(self) -> None:
+        """Confirm the configured credentials are actually accepted by Jira.
+
+        Jira Cloud's search endpoints fail *open*: a rejected or expired API
+        token still gets a 200 with an empty result set instead of a 401, so
+        a bad token silently looked like "no matching tickets" downstream.
+        Checking ``/myself`` — which does reject a bad token — up front turns
+        that into a clear error at construction time instead.
+        """
+        try:
+            self._client.myself()
+        except JIRAError as exc:
+            if exc.status_code == 401:
+                raise ValueError(
+                    f"Jira authentication failed for {settings.JIRA_USER_EMAIL} "
+                    f"at {settings.JIRA_BASE_URL}: the API token was rejected (401). "
+                    "Generate a new token at "
+                    "https://id.atlassian.com/manage-profile/security/api-tokens "
+                    "and update JIRA_API_TOKEN."
+                ) from exc
+            raise
 
     # -- configuration check -------------------------------------------------
 
