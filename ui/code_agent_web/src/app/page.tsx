@@ -759,6 +759,14 @@ export default function Home() {
                     projectId={selectedProjectId}
                     jiraBaseUrl={jiraStatus?.base_url || undefined}
                     onSelectChild={handleSelectTicket}
+                    onEpicProgress={async () => {
+                      if (!selectedProjectId) return;
+                      try {
+                        setTickets(await CodeAgentApiClient.listTickets(selectedProjectId));
+                      } catch (e) {
+                        console.error('Epic progress ticket refresh error:', e);
+                      }
+                    }}
                   />
                 ) : (
                   <CenterPane
