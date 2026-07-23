@@ -8,6 +8,7 @@ from app.core.config import settings
 from app.core.logging_config import get_logger
 from app.services.feature_discovery import discover_context
 from app.services.generation import chat_completion_json
+from app.services.prior_work_discovery import discover_prior_work
 from app.services.run_activity import append_activity
 from app.tools.grep import read_file as _read_file
 
@@ -87,6 +88,11 @@ CRITICAL — dependency injection registration:
 
 Put read-only reference files in context_files only.
 The PROJECT ARCHITECTURE GUIDE (AGENTS.md) in the user message is the single source of truth for folder layout, naming, DI patterns, state management, routing, and which services to use. Follow it exactly. Do not invent paths, patterns, or dependencies not described there.
+
+CRITICAL — prior implementation attempts:
+- If a "PRIOR IMPLEMENTATION ATTEMPTS" block is present in the user message, one or more earlier runs already worked on this exact ticket (or a duplicate ticket with the same title). Read each candidate's diff and treat its changes as already implemented.
+- discovery_evidence and the plan_markdown "Current State" section must call out what the prior attempt(s) already cover, referencing the branch name.
+- files_to_create/files_to_modify must reflect only the remaining gap between the prior attempt and the current request/acceptance criteria — do not re-plan work that diff already shows as done, unless it is fundamentally wrong for this request (in which case say why in reasoning).
 """
 
 
@@ -107,6 +113,7 @@ async def run_planner(
     project_path: str,
     *,
     run_id: str | None = None,
+    ticket_id: int | None = None,
     attachment_paths: list[str] | None = None,
     linked_issues_context: str | None = None,
     acceptance_criteria_hint: list[str] | None = None,
@@ -122,6 +129,24 @@ async def run_planner(
         )
 
     context_bundle = discover_context(user_request, project_path, run_id=run_id)
+
+    prior_work: dict[str, Any] = {"found": False, "candidates": []}
+    if settings.CODE_AGENT_PRIOR_WORK_DISCOVERY:
+        try:
+            prior_work = discover_prior_work(
+                ticket_id, project_path, current_run_id=run_id
+            )
+        except Exception:  # noqa: BLE001 — discovery must never block planning
+            logger.warning("Prior-work discovery raised unexpectedly", exc_info=True)
+    context_bundle["prior_work"] = prior_work
+    if run_id and prior_work.get("found"):
+        append_activity(
+            run_id,
+            type="status",
+            phase="planner",
+            title=f"Found {len(prior_work['candidates'])} prior attempt(s) for this ticket",
+            detail=", ".join(c["branch"] for c in prior_work["candidates"]),
+        )
 
     guide = context_bundle.get("project_guide") or {}
     context_payload: dict[str, Any] = {
@@ -206,6 +231,16 @@ async def run_planner(
             "identify them — proceed with the plan.\n"
             + json.dumps(explorer_findings, indent=2)
             + "\n=== END EXPLORATION FINDINGS ===\n\n"
+        )
+    if prior_work.get("found"):
+        text_content += (
+            "=== PRIOR IMPLEMENTATION ATTEMPTS (existing branches for this ticket) ===\n"
+            "One or more earlier runs already worked on this ticket. Compare their diffs "
+            "against the current request/acceptance criteria to determine what is ALREADY "
+            "implemented vs. what remains. Prefer completing/fixing the existing approach over "
+            "re-implementing from scratch, unless it is fundamentally wrong for this request.\n"
+            + json.dumps(prior_work["candidates"], indent=2)[:12000]
+            + "\n=== END PRIOR IMPLEMENTATION ATTEMPTS ===\n\n"
         )
     text_content += f"Discovery context:\n{context_text}\n\n"
     if clarification_answers:

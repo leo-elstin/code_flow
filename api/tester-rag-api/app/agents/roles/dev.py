@@ -511,6 +511,14 @@ async def run_dev(
     project_context_text = f"Project context:\n{context_bundle.get('project_context', '')}\n\n" if context_bundle.get("project_context") else ""
     dev_skills_text = _format_skills_block(context_bundle.get("dev_skills"))
 
+    prior_work = context_bundle.get("prior_work") or {}
+    prior_work_text = (
+        "Prior implementation attempts exist for this ticket — see the plan's discovery "
+        "notes for what's already covered. Read the relevant existing files before writing "
+        "new ones to avoid duplicating completed work.\n\n"
+        if prior_work.get("found") else ""
+    )
+
     # --- Plan-scoped guard context (enforced in _execute_dev_tool) ---
     allowed_paths = _plan_path_set(plan)
     analyze_targets = sorted(
@@ -603,6 +611,7 @@ async def run_dev(
                     + (f"{project_guide_text}\n\n" if project_guide_text else "")
                     + project_context_text
                     + dev_skills_text
+                    + prior_work_text
                     + (f"SDK references (auto-looked-up for deprecated APIs in feedback):\n{sdk_hints}\n\n" if sdk_hints else "")
                     + brief
                 ),

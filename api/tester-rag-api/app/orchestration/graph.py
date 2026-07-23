@@ -56,6 +56,7 @@ async def planner_node(state: FeatureRunState) -> dict:
             state["user_request"],
             state["project_path"],
             run_id=run_id or None,
+            ticket_id=state.get("ticket_id"),
             attachment_paths=state.get("attachment_paths") or None,
             linked_issues_context=linked_issues_context,
             acceptance_criteria_hint=state.get("acceptance_criteria_hint") or None,

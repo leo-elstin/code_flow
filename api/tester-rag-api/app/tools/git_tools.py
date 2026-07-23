@@ -220,3 +220,27 @@ def get_all_diffs(worktree_path: str) -> list[dict]:
     for rel in list_changed_files(worktree_path):
         diffs.append({"path": rel, "diff": get_file_diff(worktree_path, rel)})
     return diffs
+
+
+def branch_exists(repo_path: str, branch: str) -> bool:
+    proc = _run_git(["rev-parse", "-q", "--verify", f"refs/heads/{branch}"], cwd=repo_path)
+    return proc.returncode == 0
+
+
+def get_branch_diff_summary(
+    repo_path: str, branch: str, *, base: str | None = None, max_chars: int = 8000
+) -> dict:
+    """Diff `branch` against `base` (default: repo_path's current checked-out branch),
+    using triple-dot diff so only the branch's own commits are shown."""
+    base_ref = base or get_checkout_branch(repo_path)
+    files_proc = _run_git(["diff", "--name-only", f"{base_ref}...{branch}"], cwd=repo_path)
+    changed_files = [line.strip() for line in files_proc.stdout.splitlines() if line.strip()]
+    diff_proc = _run_git(["diff", f"{base_ref}...{branch}"], cwd=repo_path)
+    diff_text = diff_proc.stdout
+    truncated = len(diff_text) > max_chars
+    return {
+        "base": base_ref,
+        "changed_files": changed_files,
+        "diff": diff_text[:max_chars],
+        "diff_truncated": truncated,
+    }

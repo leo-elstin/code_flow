@@ -69,6 +69,12 @@ class Settings:
     CODE_AGENT_EXPLORER_MAX_STEPS: int = int(os.getenv("CODE_AGENT_EXPLORER_MAX_STEPS", "10"))
     # How many explorer-found files to read into the planner context.
     CODE_AGENT_EXPLORER_MAX_FILES: int = int(os.getenv("CODE_AGENT_EXPLORER_MAX_FILES", "8"))
+    # Prior-work discovery: before planning, check run history + git branches for
+    # earlier attempts on the same ticket (or a same-titled ticket) so the planner
+    # can build on existing work instead of re-implementing it from scratch.
+    CODE_AGENT_PRIOR_WORK_DISCOVERY: bool = os.getenv(
+        "CODE_AGENT_PRIOR_WORK_DISCOVERY", "true"
+    ).lower() in ("1", "true", "yes")
     # Per-request LLM timeout (seconds) and retry count. Without a timeout a
     # stalled provider response hangs the whole run (planner/dev/verifier/qa)
     # indefinitely, so this bounds every completion call.
