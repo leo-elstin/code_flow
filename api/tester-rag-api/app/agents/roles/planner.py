@@ -90,9 +90,9 @@ Put read-only reference files in context_files only.
 The PROJECT ARCHITECTURE GUIDE (AGENTS.md) in the user message is the single source of truth for folder layout, naming, DI patterns, state management, routing, and which services to use. Follow it exactly. Do not invent paths, patterns, or dependencies not described there.
 
 CRITICAL — prior implementation attempts:
-- If a "PRIOR IMPLEMENTATION ATTEMPTS" block is present in the user message, one or more earlier runs already worked on this exact ticket (or a duplicate ticket with the same title). Read each candidate's diff and treat its changes as already implemented.
-- discovery_evidence and the plan_markdown "Current State" section must call out what the prior attempt(s) already cover, referencing the branch name.
-- files_to_create/files_to_modify must reflect only the remaining gap between the prior attempt and the current request/acceptance criteria — do not re-plan work that diff already shows as done, unless it is fundamentally wrong for this request (in which case say why in reasoning).
+- If a "PRIOR IMPLEMENTATION ATTEMPTS" block is present in the user message, existing branches already carry work related to this ticket. These may be earlier agent runs (match_reason ticket_id/title), a human-authored branch named after the ticket (branch_name), or the parent epic's branch that may already contain this story (epic_branch). Read each candidate's diff and treat its changes as already implemented.
+- discovery_evidence and the plan_markdown "Current State" section must call out what each relevant branch already covers, referencing the branch name.
+- files_to_create/files_to_modify must reflect only the remaining gap between the existing branch(es) and the current request/acceptance criteria — do not re-plan work a diff already shows as done, unless it is fundamentally wrong for this request (in which case say why in reasoning).
 """
 
 
@@ -233,13 +233,33 @@ async def run_planner(
             + "\n=== END EXPLORATION FINDINGS ===\n\n"
         )
     if prior_work.get("found"):
+        # Trim per-candidate so a single large branch can't starve the others out
+        # of the prompt — every candidate must stay represented (files + a diff
+        # sample), since the most useful one may be last (e.g. a human branch).
+        trimmed = []
+        for c in prior_work["candidates"]:
+            files = c.get("changed_files") or []
+            trimmed.append({
+                "branch": c.get("branch"),
+                "match_reason": c.get("match_reason"),
+                "status": c.get("status"),
+                "changed_files": files[:50],
+                "changed_files_total": len(files),
+                "diff_sample": (c.get("diff") or "")[:2500],
+                "diff_truncated": c.get("diff_truncated") or len(c.get("diff") or "") > 2500,
+            })
         text_content += (
             "=== PRIOR IMPLEMENTATION ATTEMPTS (existing branches for this ticket) ===\n"
-            "One or more earlier runs already worked on this ticket. Compare their diffs "
-            "against the current request/acceptance criteria to determine what is ALREADY "
-            "implemented vs. what remains. Prefer completing/fixing the existing approach over "
-            "re-implementing from scratch, unless it is fundamentally wrong for this request.\n"
-            + json.dumps(prior_work["candidates"], indent=2)[:12000]
+            "Existing branches already carry work related to this ticket. Each candidate has a "
+            "`match_reason`: `ticket_id`/`title` = a previous agent run on this ticket; "
+            "`branch_name` = a branch named after this ticket's key (likely human-authored); "
+            "`epic_branch` = a branch for this ticket's parent epic (may already contain this "
+            "story's work). `changed_files` is capped (see `changed_files_total`) and `diff_sample` "
+            "is a prefix. Compare each against the current request/acceptance criteria to determine "
+            "what is ALREADY implemented vs. what remains. Strongly prefer building on / completing "
+            "the existing approach over re-implementing from scratch, unless it is fundamentally "
+            "wrong for this request.\n"
+            + json.dumps(trimmed, indent=2)[:15000]
             + "\n=== END PRIOR IMPLEMENTATION ATTEMPTS ===\n\n"
         )
     text_content += f"Discovery context:\n{context_text}\n\n"

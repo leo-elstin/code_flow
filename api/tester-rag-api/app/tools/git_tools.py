@@ -227,19 +227,79 @@ def branch_exists(repo_path: str, branch: str) -> bool:
     return proc.returncode == 0
 
 
+def resolve_default_branch(repo_path: str) -> str:
+    """Best-effort resolution of the repo's integration branch. Not every repo
+    uses ``main`` (this project's target repos default to ``development``), so
+    prefer the remote's advertised HEAD, then fall back through common names,
+    then the current checkout."""
+    head = _run_git(["symbolic-ref", "--short", "refs/remotes/origin/HEAD"], cwd=repo_path)
+    if head.returncode == 0 and head.stdout.strip():
+        return head.stdout.strip()  # e.g. "origin/development"
+    for candidate in ("development", "develop", "main", "master"):
+        if branch_exists(repo_path, candidate):
+            return candidate
+    try:
+        return get_checkout_branch(repo_path)
+    except GitMergeError:
+        return "HEAD"
+
+
+def list_branches_matching(repo_path: str, tokens: list[str]) -> list[str]:
+    """Return local + remote branch short-names whose name contains any of
+    *tokens* (case-insensitive), excluding agent/* branches (those are covered
+    by the run-history path). Deduped, remote ``origin/`` prefixes stripped."""
+    wanted = [t.lower() for t in tokens if t]
+    if not wanted:
+        return []
+    proc = _run_git(
+        ["for-each-ref", "--format=%(refname:short)", "refs/heads/", "refs/remotes/"],
+        cwd=repo_path,
+    )
+    if proc.returncode != 0:
+        return []
+    seen: set[str] = set()
+    matches: list[str] = []
+    for line in proc.stdout.splitlines():
+        name = line.strip()
+        if not name or name.endswith("/HEAD"):
+            continue
+        short = name[len("origin/"):] if name.startswith("origin/") else name
+        if short.startswith("agent/"):
+            continue
+        low = short.lower()
+        if short in seen or not any(tok in low for tok in wanted):
+            continue
+        seen.add(short)
+        matches.append(short)
+    return matches
+
+
+def _resolve_ref(repo_path: str, name: str) -> str:
+    """Resolve *name* to a usable git ref: prefer a local branch, fall back to
+    the ``origin/`` remote-tracking ref (matched branches may be remote-only)."""
+    if branch_exists(repo_path, name):
+        return name
+    remote = _run_git(["rev-parse", "-q", "--verify", f"refs/remotes/origin/{name}"], cwd=repo_path)
+    if remote.returncode == 0:
+        return f"origin/{name}"
+    return name
+
+
 def get_branch_diff_summary(
     repo_path: str, branch: str, *, base: str | None = None, max_chars: int = 8000
 ) -> dict:
-    """Diff `branch` against `base` (default: repo_path's current checked-out branch),
+    """Diff `branch` against `base` (default: the repo's resolved default branch),
     using triple-dot diff so only the branch's own commits are shown."""
-    base_ref = base or get_checkout_branch(repo_path)
-    files_proc = _run_git(["diff", "--name-only", f"{base_ref}...{branch}"], cwd=repo_path)
+    base_ref = base or resolve_default_branch(repo_path)
+    branch_ref = _resolve_ref(repo_path, branch)
+    files_proc = _run_git(["diff", "--name-only", f"{base_ref}...{branch_ref}"], cwd=repo_path)
     changed_files = [line.strip() for line in files_proc.stdout.splitlines() if line.strip()]
-    diff_proc = _run_git(["diff", f"{base_ref}...{branch}"], cwd=repo_path)
+    diff_proc = _run_git(["diff", f"{base_ref}...{branch_ref}"], cwd=repo_path)
     diff_text = diff_proc.stdout
     truncated = len(diff_text) > max_chars
     return {
         "base": base_ref,
+        "branch": branch_ref,
         "changed_files": changed_files,
         "diff": diff_text[:max_chars],
         "diff_truncated": truncated,

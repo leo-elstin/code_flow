@@ -114,6 +114,35 @@ def test_get_branch_diff_summary_truncates(git_repo):
     assert len(summary["diff"]) == 500
 
 
+def test_resolve_default_branch_falls_back_to_common_names(git_repo):
+    # No origin/HEAD in a bare local repo → falls through to the "main" candidate.
+    assert git_tools.resolve_default_branch(str(git_repo)) == "main"
+
+
+def test_list_branches_matching_finds_by_token_and_excludes_agent(git_repo):
+    subprocess.run(["git", "branch", "feature/MMA-3480-multi-container"], cwd=git_repo, check=True)
+    subprocess.run(["git", "branch", "feature/MMA-9999-unrelated"], cwd=git_repo, check=True)
+    subprocess.run(["git", "branch", "agent/MMA-3480-should-be-ignored"], cwd=git_repo, check=True)
+
+    matches = git_tools.list_branches_matching(str(git_repo), ["MMA-3480"])
+    assert "feature/MMA-3480-multi-container" in matches
+    assert "feature/MMA-9999-unrelated" not in matches
+    assert all(not m.startswith("agent/") for m in matches)
+
+
+def test_get_branch_diff_summary_defaults_base_to_resolved_default(git_repo):
+    subprocess.run(["git", "checkout", "-b", "feature/MMA-1-x"], cwd=git_repo, check=True, capture_output=True)
+    (git_repo / "f.dart").write_text("class X {}\n", encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=git_repo, check=True)
+    subprocess.run(["git", "commit", "-m", "x"], cwd=git_repo, check=True)
+    subprocess.run(["git", "checkout", "main"], cwd=git_repo, check=True, capture_output=True)
+
+    summary = git_tools.get_branch_diff_summary(str(git_repo), "feature/MMA-1-x")
+    assert summary["base"] == "main"
+    assert summary["branch"] == "feature/MMA-1-x"
+    assert summary["changed_files"] == ["f.dart"]
+
+
 # ---------------------------------------------------------------------------
 # prior_work_discovery.discover_prior_work (wiring test)
 # ---------------------------------------------------------------------------
@@ -196,6 +225,50 @@ def test_discover_prior_work_matches_by_title_fallback(monkeypatch):
     assert result["found"] is True
     assert result["candidates"][0]["match_reason"] == "title"
     assert result["candidates"][0]["branch_exists"] is False
+
+
+def test_discover_prior_work_finds_epic_branch_for_child_story(monkeypatch):
+    # Child story MMA-3481 whose parent epic is MMA-3480; a human branch exists
+    # for the epic but nothing in run history references the child.
+    monkeypatch.setattr(
+        prior_work_discovery.project_ticket_store,
+        "get_ticket",
+        lambda tid: {
+            "id": tid, "project_id": 1, "title": "Select multiple container types",
+            "jira_key": "MMA-3481", "jira_parent_key": "MMA-3480",
+        },
+    )
+    monkeypatch.setattr(prior_work_discovery.project_ticket_store, "list_tickets", lambda pid: [])
+    monkeypatch.setattr(
+        prior_work_discovery.run_index, "list_runs_by_ticket_id",
+        lambda tid, exclude_run_id=None, limit=3: [],
+    )
+
+    seen_tokens = {}
+
+    def fake_list_branches(project_path, tokens):
+        seen_tokens["tokens"] = tokens
+        return ["feature/MMA-3480-multi-container"]
+
+    monkeypatch.setattr(prior_work_discovery.git_tools, "list_branches_matching", fake_list_branches)
+    monkeypatch.setattr(
+        prior_work_discovery.git_tools, "get_branch_diff_summary",
+        lambda p, b: {
+            "base": "development", "branch": b,
+            "changed_files": ["lib/features/book_module/multi_container/ui/vm/multi_container_cubit.dart"],
+            "diff": "+class MultiContainerCubit", "diff_truncated": False,
+        },
+    )
+
+    result = prior_work_discovery.discover_prior_work(15, "/tmp/proj")
+    # Both the ticket's own key and the parent epic key are offered as scan tokens.
+    assert seen_tokens["tokens"] == ["MMA-3481", "MMA-3480"]
+    assert result["found"] is True
+    cand = result["candidates"][0]
+    assert cand["branch"] == "feature/MMA-3480-multi-container"
+    assert cand["match_reason"] == "epic_branch"
+    assert cand["run_id"] is None
+    assert "multi_container_cubit.dart" in cand["changed_files"][0]
 
 
 def test_discover_prior_work_never_raises_on_failure(monkeypatch):
