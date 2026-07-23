@@ -19,7 +19,7 @@ const TAP_FEEDBACK_MS = 350;
 
 export default function SimulatorView() {
   const [devices, setDevices] = useState<SimulatorDevice[]>([]);
-  const [selectedUdid, setSelectedUdid] = useState<string | null>(null);
+  const [selectedUdid, setSelectedUdid] = useState<string>('');
   const [isLoadingDevices, setIsLoadingDevices] = useState(false);
   const [devicesError, setDevicesError] = useState<string | null>(null);
 
@@ -223,7 +223,7 @@ export default function SimulatorView() {
       <div className="flex items-center gap-3">
         <div className="w-72">
           <Select
-            value={selectedUdid || undefined}
+            value={selectedUdid}
             onValueChange={(udid) => handleBootAndSelect(udid)}
           >
             <SelectTrigger>
