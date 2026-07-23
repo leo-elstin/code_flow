@@ -353,7 +353,7 @@ export default function Home() {
       await loadTicketsForProject(projectId);
       toast.success(`Jira Sync complete. Synced ${res.total} tickets (${res.created} created, ${res.updated} updated).`);
     } catch (err: any) {
-      throw new Error(err.message || 'Jira sync failed');
+      toast.error(err.message || 'Jira sync failed');
     } finally {
       setIsSyncingJira(false);
     }
