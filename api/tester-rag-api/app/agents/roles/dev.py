@@ -5,9 +5,10 @@ import shlex
 import subprocess
 from typing import Any
 
+from app.agents.message_trim import trim_tool_messages
 from app.core.config import settings
 from app.core.logging_config import get_logger
-from app.services.generation import acompletion
+from app.services.generation import acompletion, extract_cached_tokens, get_dev_model
 from app.services.run_activity import append_activity
 from app.tools.dart_tools import (
     dart_source_signature,
@@ -31,13 +32,21 @@ You work iteratively by calling tools. Analyze your progress after each tool res
 When the implementation is complete and all files compile cleanly, respond with a plain-text summary of everything
 you created and modified — do not call any more tools.
 
+CRITICAL — Issue independent tool calls TOGETHER in a single turn:
+- You can return SEVERAL tool calls in one response. Any calls that do not depend on each other's results MUST go out together.
+- Creating planned files: when the plan lists several files to create and you know what goes in them, issue ALL those "write_file" calls in ONE turn. Do NOT write one file per turn.
+- Exploring: issue all the "read_file" / "search_codebase" calls you need at once rather than one at a time.
+- Only split across turns when a call genuinely needs an earlier call's result (e.g. read a file, then edit it based on what you read).
+- Every extra turn re-sends the entire conversation so far, so one turn with five calls costs far less than five turns with one call.
+
 Rules:
 - Avoid overwriting entire files using "write_file" for small changes. Use "edit_file" instead to perform precise modifications.
-- BATCH your work: when you already know several edits you need to make (across one or more files), issue them together in a SINGLE "apply_edits" call instead of one "edit_file" call per turn. This is much faster. Only fall back to a single "edit_file" when an edit depends on the result of a previous one.
+- BATCH your edits: when you already know several edits you need to make (across one or more files), issue them together in a SINGLE "apply_edits" call instead of one "edit_file" call per turn. This is much faster. Only fall back to a single "edit_file" when an edit depends on the result of a previous one.
 - HOWEVER, if a file becomes severely corrupted (e.g., edits keep failing because the code is duplicated or mangled), you SHOULD use "write_file" to rewrite the entire file with the correct content.
 - Ensure "target_content" matches a block in the file. Whitespace differences (trailing spaces, indentation) are tolerated, but the block must be unique unless you pass allow_multiple.
 - Verify your code compiles with the "analyze_changed_files" tool after a batch of changes — you do NOT need to analyze after every single edit.
 - If compile errors are found, fix them iteratively or rollback files to undo mistakes using "roll_back_file".
+- For a large file where you only need to see one method/widget/class, pass "offset"/"limit" to "read_file" to read just that range instead of the whole file.
 
 CRITICAL — Scope discipline (ENFORCED: the tool layer rejects out-of-scope writes/edits and blocked commands):
 - ONLY create or modify files that are listed in the approved plan (files_to_create, files_to_modify).
@@ -409,26 +418,33 @@ def _execute_dev_tool(
 
 _DEV_MSG_KEEP_RECENT_TOOLS = 12
 _DEV_MSG_STUB_LEN = 400
+# The stale/full cutoff advances in batches of this many tool results instead
+# of shifting by one on every single call. Recomputing "last N full" as a pure
+# sliding window means almost every turn stubs exactly one message for the
+# first time — a byte-level mutation partway through the conversation, which
+# breaks prefix-based prompt caching (both Anthropic's cache_control and
+# OpenAI's automatic longest-prefix match need that prefix to stay
+# byte-identical call to call). Freezing the cutoff for a whole batch lets the
+# cache actually hold across that stretch instead of invalidating every step.
+#
+# Must stay comfortably above how many tool calls a single step can add: the
+# "batch independent tool calls into one turn" prompt instruction (see
+# DEV_SYSTEM_LOOP) routinely produces 5-11 tool results in ONE step now, so a
+# batch size anywhere near that (6 was measured live to be too small) gets
+# blown past within a single step almost every time, and the cutoff ends up
+# advancing every step anyway — the exact bug this constant exists to avoid.
+_DEV_MSG_TRIM_BATCH = 24
 
 
 def _trim_dev_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Shrink the carried conversation without breaking tool_call/tool_result pairing.
-
-    Every message is kept (so each assistant tool_call keeps its matching tool result,
-    which the API requires), but the *content* of all but the most recent tool results
-    is stubbed. That preserves the agent's reasoning and recent evidence while shedding
-    the bulk of old file dumps, so carrying context across iterations stays bounded."""
-    tool_positions = [i for i, m in enumerate(messages) if m.get("role") == "tool"]
-    if len(tool_positions) <= _DEV_MSG_KEEP_RECENT_TOOLS:
-        return messages
-    stale = set(tool_positions[:-_DEV_MSG_KEEP_RECENT_TOOLS])
-    trimmed: list[dict[str, Any]] = []
-    for i, msg in enumerate(messages):
-        content = msg.get("content")
-        if i in stale and isinstance(content, str) and len(content) > _DEV_MSG_STUB_LEN:
-            msg = {**msg, "content": content[:_DEV_MSG_STUB_LEN] + "\n...[older tool output trimmed]"}
-        trimmed.append(msg)
-    return trimmed
+    """Dev-loop-tuned wrapper around the shared tool-message trimmer — see
+    app.agents.message_trim.trim_tool_messages for the rationale."""
+    return trim_tool_messages(
+        messages,
+        keep_recent=_DEV_MSG_KEEP_RECENT_TOOLS,
+        stub_len=_DEV_MSG_STUB_LEN,
+        batch_size=_DEV_MSG_TRIM_BATCH,
+    )
 
 
 def _finalize_dev_changes(
@@ -483,7 +499,7 @@ async def run_dev(
     # loop resumes that conversation instead of rebuilding the system prompt and
     # re-running discovery — the earlier reads and reasoning are already in context.
     continuing = bool(prior_messages)
-    logger.info("Dev starting worktree=%s using tiered model=%s", worktree_path, settings.CODE_AGENT_DEV_MODEL)
+    logger.info("Dev starting worktree=%s using tiered model=%s", worktree_path, get_dev_model())
     if run_id:
         append_activity(
             run_id,
@@ -510,6 +526,14 @@ async def run_dev(
     project_guide_text = f"Project guide ({guide.get('path', 'AGENTS.md')}):\n{guide.get('content', '')}" if guide.get("found") else ""
     project_context_text = f"Project context:\n{context_bundle.get('project_context', '')}\n\n" if context_bundle.get("project_context") else ""
     dev_skills_text = _format_skills_block(context_bundle.get("dev_skills"))
+
+    prior_work = context_bundle.get("prior_work") or {}
+    prior_work_text = (
+        "Prior implementation attempts exist for this ticket — see the plan's discovery "
+        "notes for what's already covered. Read the relevant existing files before writing "
+        "new ones to avoid duplicating completed work.\n\n"
+        if prior_work.get("found") else ""
+    )
 
     # --- Plan-scoped guard context (enforced in _execute_dev_tool) ---
     allowed_paths = _plan_path_set(plan)
@@ -560,7 +584,7 @@ async def run_dev(
     except Exception:
         logger.debug("Proactive SDK lookup failed (non-fatal)", exc_info=True)
 
-    dev_model = settings.CODE_AGENT_DEV_MODEL
+    dev_model = get_dev_model()
     logger.info("Dev starting native tool-calling loop model=%s", dev_model)
 
     # Per-run baseline store so edits can be undone to the run's start state
@@ -594,15 +618,23 @@ async def run_dev(
             }
         )
     else:
+        # plan_markdown is a prose restatement of fields already present
+        # elsewhere in this same dict (feature_summary, architecture,
+        # acceptance_criteria, discovery_evidence, ...) — it exists for the
+        # human-facing plan review UI, not for the dev loop. Dropping it here
+        # saves ~2k tokens on every single turn of the run without losing any
+        # information the model doesn't already have in structured form.
+        dev_plan = {k: v for k, v in plan.items() if k != "plan_markdown"}
         messages = [
             {"role": "system", "content": DEV_SYSTEM_LOOP},
             {
                 "role": "user",
                 "content": (
-                    f"Approved plan:\n{json.dumps(plan, indent=2)}\n\n"
+                    f"Approved plan:\n{json.dumps(dev_plan, indent=2)}\n\n"
                     + (f"{project_guide_text}\n\n" if project_guide_text else "")
                     + project_context_text
                     + dev_skills_text
+                    + prior_work_text
                     + (f"SDK references (auto-looked-up for deprecated APIs in feedback):\n{sdk_hints}\n\n" if sdk_hints else "")
                     + brief
                 ),
@@ -631,7 +663,28 @@ async def run_dev(
             messages=messages,
             tools=tool_schemas,
             tool_choice="auto",
+            # Nudges repeated calls in this run toward the same cache-holding
+            # backend shard (OpenAI-only; Anthropic client drops unknown kwargs).
+            **({"prompt_cache_key": run_id} if run_id else {}),
         )
+
+        usage = getattr(response, "usage", None)
+        if run_id and usage:
+            total = int(getattr(usage, "total_tokens", 0) or 0)
+            if total > 0:
+                append_activity(
+                    run_id,
+                    type="token",
+                    phase="dev",
+                    title=f"Token usage (dev step {step})",
+                    detail=f"{total} tokens",
+                    meta={
+                        "prompt_tokens": int(getattr(usage, "prompt_tokens", 0) or 0),
+                        "completion_tokens": int(getattr(usage, "completion_tokens", 0) or 0),
+                        "total_tokens": total,
+                        "cached_tokens": extract_cached_tokens(usage),
+                    },
+                )
 
         msg = response.choices[0].message
         # Append the full assistant message (preserves tool_calls for the API)
@@ -684,6 +737,14 @@ async def run_dev(
                 "tool_call_id": tc.id,
                 "content": str(tool_result),
             })
+
+        # Previously only applied at run boundaries (continuation start / final
+        # persistence), so a single long run's tool results kept accumulating
+        # in full for its entire lifetime. Applying it every step keeps a
+        # long-running loop bounded instead of growing unchecked until it hits
+        # a rate limit — safe to call every step since it's a no-op on
+        # messages that are already stubbed.
+        messages = _trim_dev_messages(messages)
 
     else:
         # Exited via step limit, not natural completion

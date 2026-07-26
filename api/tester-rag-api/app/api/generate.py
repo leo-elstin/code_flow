@@ -4,6 +4,7 @@ from pydantic import BaseModel, Field
 from app.api.context import get_module_context, ContextRequest
 from app.core.config import settings
 from app.services.generation import acompletion, get_generation_model
+from app.services.llm_config import resolve_llm_config
 
 router = APIRouter()
 
@@ -11,13 +12,18 @@ router = APIRouter()
 @router.get(
     "/generation-provider",
     summary="Get generation provider status",
-    description="Returns OpenAI generation configuration status.",
+    description="Returns the resolved LLM generation configuration status.",
 )
 async def generation_provider_status():
+    config = resolve_llm_config()
     return {
-        "provider": "openai",
-        "openai_key_configured": bool(settings.OPENAI_API_KEY),
-        "chat_model": settings.OPENAI_CHAT_MODEL,
+        "provider": config.provider,
+        "key_configured": bool(config.api_key),
+        "base_url": config.base_url,
+        "chat_model": config.chat_model,
+        "dev_model": config.resolved_dev_model,
+        # Embeddings are still configured via .env — they are not part of the
+        # switchable provider config.
         "embedding_model": settings.OPENAI_EMBEDDING_MODEL,
     }
 

@@ -72,6 +72,7 @@ def ensure_schema() -> None:
         )
         _ensure_project_context_columns(conn)
         _ensure_jira_columns(conn)
+        _ensure_llm_columns(conn)
         conn.commit()
 
 
@@ -107,6 +108,23 @@ def _ensure_jira_columns(conn: sqlite3.Connection) -> None:
     conn.execute(
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_tickets_jira_key ON tickets(project_id, jira_key) WHERE jira_key IS NOT NULL"
     )
+
+
+def _ensure_llm_columns(conn: sqlite3.Connection) -> None:
+    """Per-project LLM provider override. All nullable — a NULL llm_provider
+    means the project uses the global config."""
+    project_cols = {row[1] for row in conn.execute("PRAGMA table_info(projects)").fetchall()}
+    for column in (
+        "llm_provider",
+        "llm_api_key",
+        "llm_base_url",
+        "llm_chat_model",
+        "llm_dev_model",
+        "llm_reasoning_effort",
+        "llm_reasoning_mode",
+    ):
+        if column not in project_cols:
+            conn.execute(f"ALTER TABLE projects ADD COLUMN {column} TEXT")
 
 
 def _row_to_project(row: sqlite3.Row) -> dict:

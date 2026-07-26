@@ -18,6 +18,10 @@ interface EpicRunPanelProps {
   projectId: number | null;
   jiraBaseUrl?: string;
   onSelectChild: (ticketId: number) => void;
+  /** Fired whenever the epic's status or any child status changes, so the parent
+   *  can refresh the board/ticket-detail — child ticket statuses live in the
+   *  ticket store and go stale while the epic advances in the background. */
+  onEpicProgress?: () => void;
 }
 
 const ACTIVE = new Set(['planning', 'developing']);
@@ -60,11 +64,17 @@ function statusBadge(status: string) {
   );
 }
 
-export default function EpicRunPanel({ ticket, tickets, projectId, jiraBaseUrl, onSelectChild }: EpicRunPanelProps) {
+export default function EpicRunPanel({ ticket, tickets, projectId, jiraBaseUrl, onSelectChild, onEpicProgress }: EpicRunPanelProps) {
   const [epicRun, setEpicRun] = useState<EpicRun | null>(null);
   const [isBusy, setIsBusy] = useState(false);
   const [autoMode, setAutoMode] = useState(false);
   const pollRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Keep the latest callback in a ref so the progress effect below doesn't
+  // re-arm (and re-fire) every render just because the parent passed a new
+  // closure — it should fire only when epic/child status actually changes.
+  const onEpicProgressRef = useRef(onEpicProgress);
+  useEffect(() => { onEpicProgressRef.current = onEpicProgress; }, [onEpicProgress]);
 
   const childTickets = getChildren(tickets, ticket);
 
@@ -102,6 +112,18 @@ export default function EpicRunPanel({ ticket, tickets, projectId, jiraBaseUrl, 
     }
     return stop;
   }, [epicRun?.epic_run_id, epicRun?.status]);
+
+  // Whenever the epic status or any child's status changes, ask the parent to
+  // refresh the board + ticket detail. Child runs advance in the background and
+  // write their terminal status (e.g. failed) to the ticket store, but nothing
+  // else prompts the board to re-fetch — so without this a failed child keeps
+  // showing as "pending"/"Waiting for execution".
+  const childSignature = (epicRun?.children || [])
+    .map((c) => `${c.ticket_id}:${c.status}`)
+    .join(',');
+  useEffect(() => {
+    if (epicRun) onEpicProgressRef.current?.();
+  }, [epicRun?.status, childSignature]);
 
   const handleStart = async () => {
     setIsBusy(true);

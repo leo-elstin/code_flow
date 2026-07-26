@@ -14,12 +14,15 @@ from app.core.logging_config import get_logger
 from app.orchestration.graph import build_graph
 from app.orchestration.manual_retry import execute_manual_retry, validate_manual_retry_eligibility
 from app.orchestration.state import FeatureRunState, initial_state
+from app.services.llm_config import set_active_project
 from app.services.merge_worktree import MergeValidationError, apply_merge_to_base, validate_merge_request
 from app.services.project_ticket_store import set_ticket_run, update_ticket_status_by_run
+from app.services.run_activity import append_activity, clear_activity
 from app.services.run_index import list_executions as list_indexed_executions
 from app.services.run_index import list_runs as list_indexed_runs
 from app.services.run_index import sync_missing_from_checkpoints, upsert_run
 from app.services.worktree import WorktreeError, prepare_workspace
+from app.tools import git_tools
 from app.tools.filesystem import restore_all_baselines
 
 logger = get_logger("runner")
@@ -132,6 +135,21 @@ def _enable_wal(db_path: str) -> None:
             conn.close()
     except sqlite3.Error as exc:
         logger.warning("Could not enable WAL on %s: %s", db_path, exc)
+
+
+def _resolve_discovered_base_ref(project_path: str, context_bundle: dict) -> str | None:
+    """The branch the planner selected from prior-work discovery, if it still
+    resolves. Re-checked here (not just at planning time) since the branch
+    could have been deleted or rebased away in the meantime."""
+    candidate_ref = (context_bundle.get("prior_work") or {}).get("selected_branch")
+    if not candidate_ref:
+        return None
+    if git_tools.ref_exists(project_path, candidate_ref):
+        return candidate_ref
+    logger.warning(
+        "Discovered branch %s no longer resolves; worktree will use HEAD instead", candidate_ref
+    )
+    return None
 
 
 class CodeAgentRunner:
@@ -290,7 +308,13 @@ class CodeAgentRunner:
         self,
         run_id: str,
         invoke: Callable[[Any], Awaitable[Any]],
+        project_path: str | None = None,
     ) -> None:
+        # Every run path funnels through here, so this is the one place that
+        # needs to bind the project for per-project LLM override resolution.
+        # The ContextVar is copied into the tasks and threads the graph spawns,
+        # so every agent role sees it without passing it down explicitly.
+        set_active_project(project_path)
         try:
             async with self._checkpointer() as checkpointer:
                 graph = await self._compile(checkpointer)
@@ -401,7 +425,7 @@ class CodeAgentRunner:
         async def _invoke(graph) -> None:
             await graph.ainvoke(None, self._config(run_id))
 
-        task = asyncio.create_task(self._run_graph(run_id, _invoke))
+        task = asyncio.create_task(self._run_graph(run_id, _invoke, project_path))
         self._tasks[run_id] = task
         logger.info("Run started run_id=%s status=planning", run_id)
 
@@ -515,11 +539,26 @@ class CodeAgentRunner:
 
         mode = workspace_mode if workspace_mode in {"worktree", "in_place"} else "worktree"
 
+        if not base_ref:
+            # No caller-supplied base (the normal standalone-approval path never
+            # passes one; an epic falls through here too if its own integration
+            # worktree failed to set up). Fall back to the branch the planner
+            # already selected from prior-work discovery, if any.
+            base_ref = _resolve_discovered_base_ref(current["project_path"], current.get("context_bundle") or {})
+            if base_ref:
+                append_activity(
+                    run_id,
+                    type="status",
+                    phase="dev",
+                    title="Workspace seeded from discovered branch",
+                    detail=base_ref,
+                )
+
         try:
             # prepare_workspace runs `pub get` (up to minutes); keep it off the
             # event loop so the API and other runs stay responsive.
-            # base_ref lets an epic-run branch this child's worktree off the
-            # shared integration branch instead of the project's HEAD.
+            # base_ref lets a worktree branch off a shared epic integration
+            # branch, or a discovered prior-work branch, instead of HEAD.
             workspace = await asyncio.to_thread(
                 prepare_workspace,
                 current["project_path"],
@@ -554,7 +593,7 @@ class CodeAgentRunner:
         async def _invoke(graph) -> None:
             await graph.ainvoke(None, self._config(run_id))
 
-        task = asyncio.create_task(self._run_graph(run_id, _invoke))
+        task = asyncio.create_task(self._run_graph(run_id, _invoke, current["project_path"]))
         self._tasks[run_id] = task
         logger.info("Run resumed after approval run_id=%s status=developing", run_id)
         return await self.get_state(run_id)
@@ -734,7 +773,7 @@ class CodeAgentRunner:
         async def _invoke(graph) -> None:
             await graph.ainvoke(None, self._config(new_run_id))
 
-        task = asyncio.create_task(self._run_graph(new_run_id, _invoke))
+        task = asyncio.create_task(self._run_graph(new_run_id, _invoke, current["project_path"]))
         self._tasks[new_run_id] = task
         return await self.get_state(new_run_id)
 
@@ -754,7 +793,7 @@ class CodeAgentRunner:
         async def _invoke(graph) -> None:
             await graph.ainvoke(None, self._config(run_id))
 
-        task = asyncio.create_task(self._run_graph(run_id, _invoke))
+        task = asyncio.create_task(self._run_graph(run_id, _invoke, current["project_path"]))
         self._tasks[run_id] = task
         return await self.get_state(run_id)
 
@@ -782,6 +821,12 @@ class CodeAgentRunner:
 
         logger.info("Cleared workspace for run_id=%s, now clearing checkpoints", run_id)
         self._clear_checkpoints(run_id)
+        # A revert reuses this run_id for what is semantically a brand-new
+        # execution (full re-plan from scratch), unlike a retry which gets
+        # its own run_id — without this, the activity log and token totals
+        # (which are keyed by run_id and never pruned for token events)
+        # would keep accumulating the discarded attempt's data forever.
+        clear_activity(run_id)
 
         # Re-seed the initial planning state on top of the cleared checkpoints
         state = initial_state(run_id, current["user_request"], current["project_path"])
@@ -800,7 +845,7 @@ class CodeAgentRunner:
         async def _invoke(graph) -> None:
             await graph.ainvoke(None, self._config(run_id))
 
-        task = asyncio.create_task(self._run_graph(run_id, _invoke))
+        task = asyncio.create_task(self._run_graph(run_id, _invoke, current["project_path"]))
         self._tasks[run_id] = task
 
         return await self.get_state(run_id)

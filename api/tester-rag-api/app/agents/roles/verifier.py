@@ -369,7 +369,11 @@ def _build_llm_payload(
 ) -> dict[str, Any]:
     """Trim the LLM-review payload: subprocess stdout/stderr adds no review
     signal once the gate passed (error_lines already carry analyzer findings),
-    and only failed test output is worth showing. Diffs are capped per file."""
+    and only failed test output is worth showing. Diffs are capped per file.
+    plan_markdown is dropped too — it's a prose restatement of fields already
+    present elsewhere in this same plan dict (feature_summary, architecture,
+    acceptance_criteria, ...), so it adds no review signal, only tokens."""
+    plan = {k: v for k, v in plan.items() if k != "plan_markdown"}
     gate_summary = dict(gate)
     for key in ("pub_get", "build_runner", "test_results"):
         section = gate_summary.get(key)

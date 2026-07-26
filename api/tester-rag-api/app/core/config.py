@@ -69,11 +69,21 @@ class Settings:
     CODE_AGENT_EXPLORER_MAX_STEPS: int = int(os.getenv("CODE_AGENT_EXPLORER_MAX_STEPS", "10"))
     # How many explorer-found files to read into the planner context.
     CODE_AGENT_EXPLORER_MAX_FILES: int = int(os.getenv("CODE_AGENT_EXPLORER_MAX_FILES", "8"))
+    # Prior-work discovery: before planning, check run history + git branches for
+    # earlier attempts on the same ticket (or a same-titled ticket) so the planner
+    # can build on existing work instead of re-implementing it from scratch.
+    CODE_AGENT_PRIOR_WORK_DISCOVERY: bool = os.getenv(
+        "CODE_AGENT_PRIOR_WORK_DISCOVERY", "true"
+    ).lower() in ("1", "true", "yes")
     # Per-request LLM timeout (seconds) and retry count. Without a timeout a
     # stalled provider response hangs the whole run (planner/dev/verifier/qa)
     # indefinitely, so this bounds every completion call.
     CODE_AGENT_LLM_TIMEOUT: int = int(os.getenv("CODE_AGENT_LLM_TIMEOUT", "120"))
     CODE_AGENT_LLM_MAX_RETRIES: int = int(os.getenv("CODE_AGENT_LLM_MAX_RETRIES", "1"))
+    # Anthropic requires max_tokens on every request (OpenAI treats it as
+    # optional), so the Anthropic client needs a default. 8192 is accepted by
+    # every current Claude model and leaves the dev loop room to write files.
+    CODE_AGENT_LLM_MAX_TOKENS: int = int(os.getenv("CODE_AGENT_LLM_MAX_TOKENS", "8192"))
     # Timeout (seconds) for Jira REST calls so referenced-ticket resolution and
     # sync can never hang a run.
     CODE_AGENT_JIRA_TIMEOUT: int = int(os.getenv("CODE_AGENT_JIRA_TIMEOUT", "20"))

@@ -213,12 +213,45 @@ def _python_fallback_grep(project_path: str, term: str, *, max_results: int) -> 
     return matches
 
 
-def read_file(project_path: str, relative_path: str, *, max_chars: int = 120_000) -> str:
+def read_file(
+    project_path: str,
+    relative_path: str,
+    *,
+    max_chars: int = 120_000,
+    offset: int = 0,
+    limit: int | None = None,
+) -> str:
+    """Read a file, optionally windowed to a 1-based line range.
+
+    ``offset``/``limit`` default to the whole file (unchanged behavior for
+    every existing caller — planner, explorer, feature_discovery all read
+    unwindowed). Only pass them to read a slice of a large file instead of
+    paying for the whole thing every time, the way a full-file read at up to
+    ``max_chars`` (120k chars, ~30k tokens) can dominate a tool-calling loop's
+    context after just a couple of calls.
+    """
     abs_path = resolve_read_path(project_path, relative_path)
     if not os.path.isfile(abs_path):
         raise FileNotFoundError(relative_path)
+
+    if not offset and limit is None:
+        with open(abs_path, "r", encoding="utf-8", errors="replace") as handle:
+            content = handle.read(max_chars + 1)
+        if len(content) > max_chars:
+            return content[:max_chars] + "\n... [TRUNCATED]"
+        return content
+
     with open(abs_path, "r", encoding="utf-8", errors="replace") as handle:
-        content = handle.read(max_chars + 1)
+        lines = handle.readlines()
+
+    total = len(lines)
+    start = max(offset - 1, 0) if offset else 0
+    end = start + limit if limit is not None else total
+    window = lines[start:end]
+    content = "".join(window)
+
     if len(content) > max_chars:
-        return content[:max_chars] + "\n... [TRUNCATED]"
-    return content
+        content = content[:max_chars] + "\n... [TRUNCATED]"
+
+    shown_end = min(start + len(window), total)
+    return f"[lines {start + 1}-{shown_end} of {total}]\n{content}"

@@ -33,3 +33,8 @@ api/tester-rag-api/scratch/
 **/build/
 **/.flutter-plugins
 **/.flutter-plugins-dependencies
+
+# Local agent skill tooling (not app code)
+/.agents/
+/.claude/skills/
+/skills-lock.json

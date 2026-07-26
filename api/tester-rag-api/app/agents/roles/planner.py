@@ -8,6 +8,7 @@ from app.core.config import settings
 from app.core.logging_config import get_logger
 from app.services.feature_discovery import discover_context
 from app.services.generation import chat_completion_json
+from app.services.prior_work_discovery import discover_prior_work, select_base_ref
 from app.services.run_activity import append_activity
 from app.tools.grep import read_file as _read_file
 
@@ -87,6 +88,12 @@ CRITICAL — dependency injection registration:
 
 Put read-only reference files in context_files only.
 The PROJECT ARCHITECTURE GUIDE (AGENTS.md) in the user message is the single source of truth for folder layout, naming, DI patterns, state management, routing, and which services to use. Follow it exactly. Do not invent paths, patterns, or dependencies not described there.
+
+CRITICAL — prior implementation attempts:
+- If a "PRIOR IMPLEMENTATION ATTEMPTS" block is present in the user message, existing branches already carry work related to this ticket. Each candidate's `worktree_status` tells you whether its code will actually be on disk for this run — read that field before deciding what to plan.
+- For the candidate marked SELECTED: its changes are genuinely already implemented in your worktree. files_to_create/files_to_modify must reflect only the remaining gap between it and the current request/acceptance criteria — do not re-plan work its diff already shows as done, unless it is fundamentally wrong for this request (in which case say why in reasoning).
+- For every OTHER candidate (marked "reference only"): its changes are NOT present in your worktree. If its implementation is worth reusing, the corresponding files still belong in files_to_create/files_to_modify — port the proven code from its diff_sample rather than skipping those files or re-deriving the implementation from scratch.
+- discovery_evidence and the plan_markdown "Current State" section must call out what each relevant branch covers and whether it's SELECTED (already in your worktree) or reference-only (still needs porting), referencing the branch name.
 """
 
 
@@ -107,6 +114,7 @@ async def run_planner(
     project_path: str,
     *,
     run_id: str | None = None,
+    ticket_id: int | None = None,
     attachment_paths: list[str] | None = None,
     linked_issues_context: str | None = None,
     acceptance_criteria_hint: list[str] | None = None,
@@ -122,6 +130,30 @@ async def run_planner(
         )
 
     context_bundle = discover_context(user_request, project_path, run_id=run_id)
+
+    prior_work: dict[str, Any] = {"found": False, "candidates": []}
+    if settings.CODE_AGENT_PRIOR_WORK_DISCOVERY:
+        try:
+            prior_work = discover_prior_work(
+                ticket_id, project_path, current_run_id=run_id
+            )
+        except Exception:  # noqa: BLE001 — discovery must never block planning
+            logger.warning("Prior-work discovery raised unexpectedly", exc_info=True)
+
+    # The one candidate confident enough to actually branch this run's worktree
+    # from (see runner.approve_run) — everything else is reference-only, since
+    # its changes will NOT be present on disk unless the plan ports them.
+    selected = select_base_ref(prior_work)
+    prior_work["selected_branch"] = selected["branch"] if selected else None
+    context_bundle["prior_work"] = prior_work
+    if run_id and prior_work.get("found"):
+        append_activity(
+            run_id,
+            type="status",
+            phase="planner",
+            title=f"Found {len(prior_work['candidates'])} prior attempt(s) for this ticket",
+            detail=", ".join(c["branch"] for c in prior_work["candidates"]),
+        )
 
     guide = context_bundle.get("project_guide") or {}
     context_payload: dict[str, Any] = {
@@ -206,6 +238,46 @@ async def run_planner(
             "identify them — proceed with the plan.\n"
             + json.dumps(explorer_findings, indent=2)
             + "\n=== END EXPLORATION FINDINGS ===\n\n"
+        )
+    if prior_work.get("found"):
+        # Trim per-candidate so a single large branch can't starve the others out
+        # of the prompt — every candidate must stay represented (files + a diff
+        # sample), since the most useful one may be last (e.g. a human branch).
+        selected_branch = prior_work.get("selected_branch")
+        trimmed = []
+        for c in prior_work["candidates"]:
+            files = c.get("changed_files") or []
+            trimmed.append({
+                "branch": c.get("branch"),
+                "worktree_status": (
+                    "SELECTED — this worktree will be created from this branch's tip"
+                    if c.get("branch") == selected_branch and selected_branch
+                    else "reference only — NOT present in your worktree"
+                ),
+                "match_reason": c.get("match_reason"),
+                "status": c.get("status"),
+                "changed_files": files[:50],
+                "changed_files_total": len(files),
+                "diff_sample": (c.get("diff") or "")[:2500],
+                "diff_truncated": c.get("diff_truncated") or len(c.get("diff") or "") > 2500,
+            })
+        text_content += (
+            "=== PRIOR IMPLEMENTATION ATTEMPTS (existing branches for this ticket) ===\n"
+            "Existing branches already carry work related to this ticket. Each candidate has a "
+            "`match_reason`: `ticket_id`/`title` = a previous agent run on this ticket; "
+            "`branch_name` = a branch named after this ticket's key (likely human-authored); "
+            "`epic_branch` = a branch for this ticket's parent epic (may already contain this "
+            "story's work). `changed_files` is capped (see `changed_files_total`) and `diff_sample` "
+            "is a prefix.\n"
+            "`worktree_status` tells you whether this candidate's code will actually be on disk: "
+            "only the candidate marked SELECTED will be — its worktree is branched from that "
+            "branch's tip, so its changes are genuinely already implemented and must NOT be "
+            "re-planned. Every other candidate is reference only: its changes are NOT present in "
+            "the worktree you're planning for, so if you want to reuse them, the corresponding "
+            "files still belong in files_to_create/files_to_modify (port the proven implementation "
+            "from diff_sample rather than re-deriving it from scratch).\n"
+            + json.dumps(trimmed, indent=2)[:15000]
+            + "\n=== END PRIOR IMPLEMENTATION ATTEMPTS ===\n\n"
         )
     text_content += f"Discovery context:\n{context_text}\n\n"
     if clarification_answers:

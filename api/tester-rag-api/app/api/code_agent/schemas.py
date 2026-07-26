@@ -188,6 +188,7 @@ class TokenUsageResponse(BaseModel):
     prompt_tokens: int = 0
     completion_tokens: int = 0
     total_tokens: int = 0
+    cached_tokens: int = 0
 
 
 class ExecutionSummaryResponse(BaseModel):
@@ -291,6 +292,49 @@ class JiraStatusCheckResponse(BaseModel):
 
 class JiraTransitionResponse(BaseModel):
     transitions: list[dict] = Field(default_factory=list)
+
+
+class LlmConfigResponse(BaseModel):
+    provider: str
+    # Masked preview only (e.g. "sk-…a1b2") — the raw key never leaves the API.
+    api_key_preview: str | None = None
+    key_configured: bool = False
+    base_url: str | None = None
+    chat_model: str | None = None
+    dev_model: str | None = None
+    # OpenAI-family only; None means every call stays on Chat Completions.
+    reasoning_effort: str | None = None
+    reasoning_mode: str | None = None
+    # True when this config came from .env rather than a saved DB row, so the
+    # UI can show that nothing has been configured through the app yet.
+    from_env: bool = False
+    # Project-scoped responses only: whether an override is actually set.
+    project_id: int | None = None
+    has_override: bool | None = None
+
+
+class UpdateLlmConfigRequest(BaseModel):
+    provider: str
+    # Omitted or null keeps the stored key, so round-tripping the masked
+    # preview from the UI can never wipe a real credential. Send "" to clear.
+    api_key: str | None = None
+    base_url: str | None = None
+    chat_model: str | None = None
+    dev_model: str | None = None
+    reasoning_effort: str | None = None
+    reasoning_mode: str | None = None
+
+
+class UpdateProjectLlmConfigRequest(UpdateLlmConfigRequest):
+    # Null provider clears the override so the project falls back to global.
+    provider: str | None = None  # type: ignore[assignment]
+
+
+class LlmTestResponse(BaseModel):
+    ok: bool
+    provider: str
+    model: str | None = None
+    error: str | None = None
 
 
 class EpicChildRun(BaseModel):

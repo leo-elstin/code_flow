@@ -45,7 +45,7 @@ export default function Home() {
   const [activityEvents, setActivityEvents] = useState<AgentActivityEvent[]>([]);
   const [lastSeq, setLastSeq] = useState(0);
   const [currentAction, setCurrentAction] = useState<AgentActivityEvent | null>(null);
-  const [tokenUsage, setTokenUsage] = useState<TokenUsage>({ prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 });
+  const [tokenUsage, setTokenUsage] = useState<TokenUsage>({ prompt_tokens: 0, completion_tokens: 0, total_tokens: 0, cached_tokens: 0 });
 
   // Settings states
   const [apiBaseUrl, setApiBaseUrl] = useState('http://127.0.0.1:8000');
@@ -228,7 +228,7 @@ export default function Home() {
     setActivityEvents([]);
     setLastSeq(0);
     setCurrentAction(null);
-    setTokenUsage({ prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 });
+    setTokenUsage({ prompt_tokens: 0, completion_tokens: 0, total_tokens: 0, cached_tokens: 0 });
     
     // Trigger loads
     loadTicketsForProject(id);
@@ -246,7 +246,7 @@ export default function Home() {
     setActivityEvents([]);
     setLastSeq(0);
     setCurrentAction(null);
-    setTokenUsage({ prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 });
+    setTokenUsage({ prompt_tokens: 0, completion_tokens: 0, total_tokens: 0, cached_tokens: 0 });
 
     const ticket = tickets.find(t => t.id === id);
     if (ticket && ticket.run_id) {
@@ -265,7 +265,7 @@ export default function Home() {
           setLastSeq(Math.max(...activity.events.map(e => e.seq)));
         }
         setCurrentAction(activity.current_action || null);
-        setTokenUsage(activity.token_usage || { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 });
+        setTokenUsage(activity.token_usage || { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0, cached_tokens: 0 });
       } catch (err: any) {
         console.error('Error fetching ticket run data:', err);
       } finally {
@@ -308,7 +308,7 @@ export default function Home() {
       setActivityEvents([]);
       setLastSeq(0);
       setCurrentAction(null);
-      setTokenUsage({ prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 });
+      setTokenUsage({ prompt_tokens: 0, completion_tokens: 0, total_tokens: 0, cached_tokens: 0 });
       setJiraConfig(null);
       setAgentsMdStatus(null);
       setProjectContext(null);
@@ -382,7 +382,7 @@ export default function Home() {
     setActivityEvents([]);
     setLastSeq(0);
     setCurrentAction(null);
-    setTokenUsage({ prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 });
+    setTokenUsage({ prompt_tokens: 0, completion_tokens: 0, total_tokens: 0, cached_tokens: 0 });
 
     try {
       const runId = await CodeAgentApiClient.startRun(
@@ -459,7 +459,7 @@ export default function Home() {
       setActivityEvents([]);
       setLastSeq(0);
       setCurrentAction(null);
-      setTokenUsage({ prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 });
+      setTokenUsage({ prompt_tokens: 0, completion_tokens: 0, total_tokens: 0, cached_tokens: 0 });
       
       if (selectedProjectId) {
         await loadTicketsForProject(selectedProjectId);
@@ -619,7 +619,7 @@ export default function Home() {
         setLastSeq(Math.max(...activity.events.map(e => e.seq)));
       }
       setCurrentAction(activity.current_action || null);
-      setTokenUsage(activity.token_usage || { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 });
+      setTokenUsage(activity.token_usage || { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0, cached_tokens: 0 });
     } catch (err) {
       console.error(err);
     } finally {
@@ -759,6 +759,14 @@ export default function Home() {
                     projectId={selectedProjectId}
                     jiraBaseUrl={jiraStatus?.base_url || undefined}
                     onSelectChild={handleSelectTicket}
+                    onEpicProgress={async () => {
+                      if (!selectedProjectId) return;
+                      try {
+                        setTickets(await CodeAgentApiClient.listTickets(selectedProjectId));
+                      } catch (e) {
+                        console.error('Epic progress ticket refresh error:', e);
+                      }
+                    }}
                   />
                 ) : (
                   <CenterPane

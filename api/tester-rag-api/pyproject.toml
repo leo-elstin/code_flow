@@ -14,7 +14,7 @@ dependencies = [
     "qdrant-client",
     "python-dotenv",
     "openai",
-    "litellm",
+    "anthropic",
     "httpx",
     "jira"
 ]
@@ -22,6 +22,16 @@ dependencies = [
 [build-system]
 requires = ["setuptools", "wheel"]
 build-backend = "setuptools.build_meta"
+
+# Without this, setuptools' auto-discovery sees a flat layout with several
+# top-level candidates (app, tests, main.py) and refuses to guess, which makes
+# `pip install -e .` fail. Naming the package explicitly settles it.
+[tool.setuptools.packages.find]
+include = ["app*"]
+
+# The API tests import `from main import app`, so the entrypoint module ships too.
+[tool.setuptools]
+py-modules = ["main"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -2,7 +2,7 @@ import os
 import pytest
 from unittest.mock import patch, MagicMock
 from app.tools.dart_tools import run_flutter_test
-from app.agents.roles.verifier import compare_to_plan
+from app.agents.roles.verifier import _build_llm_payload, compare_to_plan
 
 @patch("subprocess.run")
 def test_run_flutter_test_success(mock_run):
@@ -45,3 +45,19 @@ def test_compare_to_plan_triggers_tests(mock_run, tmp_path):
         assert gate["passed"] is True
         assert gate["test_results"]["passed"] is True
         assert gate["test_results"]["skipped"] is False
+
+
+def test_build_llm_payload_drops_plan_markdown_but_keeps_structured_fields():
+    """plan_markdown is a prose restatement of fields already in the same plan
+    dict — it's for the human plan review UI, not the verifier's LLM review,
+    and was being resent on every verifier call (up to 3x per run)."""
+    plan = {
+        "feature_summary": "Add the frobnicator widget.",
+        "files_to_create": [],
+        "plan_markdown": "# Frobnicator\n\nA VERY long human-readable restatement",
+    }
+
+    payload = _build_llm_payload(plan, ["AC1"], [], [], {"passed": True})
+
+    assert "plan_markdown" not in payload["plan"]
+    assert payload["plan"]["feature_summary"] == "Add the frobnicator widget."

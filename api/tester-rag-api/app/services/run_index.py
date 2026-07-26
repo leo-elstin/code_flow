@@ -187,6 +187,40 @@ def list_executions(run_id: str) -> list[dict[str, Any]]:
     return executions
 
 
+def list_runs_by_ticket_id(
+    ticket_id: int, *, exclude_run_id: str | None = None, limit: int = 5
+) -> list[dict[str, Any]]:
+    """Latest execution (highest attempt) per root run for a given ticket, newest
+    first. Used by prior-work discovery to find earlier attempts on the same
+    ticket regardless of which run_id/root_run_id the caller is currently on."""
+    ensure_schema()
+    qualified = ", ".join(f"r.{col.strip()}" for col in _RUN_COLUMNS.split(","))
+    with _connect() as conn:
+        rows = conn.execute(
+            f"""
+            SELECT {qualified}
+            FROM runs r
+            JOIN (
+                SELECT root_run_id, MAX(attempt) AS max_attempt
+                FROM runs WHERE ticket_id = ?
+                GROUP BY root_run_id
+            ) latest
+              ON r.root_run_id = latest.root_run_id AND r.attempt = latest.max_attempt
+            WHERE r.ticket_id = ?
+            ORDER BY r.updated_at DESC
+            LIMIT ?
+            """,
+            (ticket_id, ticket_id, limit),
+        ).fetchall()
+    results = [dict(row) for row in rows]
+    if exclude_run_id:
+        results = [
+            r for r in results
+            if r["run_id"] != exclude_run_id and r["root_run_id"] != exclude_run_id
+        ]
+    return results
+
+
 async def _list_checkpoint_thread_ids() -> list[str]:
     """Return LangGraph thread IDs, or [] if the checkpoint DB is not initialized."""
     db_path = Path(settings.CODE_AGENT_CHECKPOINT_DB)

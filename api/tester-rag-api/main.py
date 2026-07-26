@@ -5,6 +5,7 @@ import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from anthropic import RateLimitError as AnthropicRateLimitError
 from openai import RateLimitError
 
 from app.api.ingest import router as ingest_router
@@ -55,16 +56,23 @@ app.include_router(po_router, prefix="/api/po")
 app.include_router(simulator_router, prefix="/api/simulator")
 
 
+def _rate_limit_response(provider: str, exc: Exception) -> JSONResponse:
+    message = str(exc).lower()
+    if "quota" in message or "insufficient_quota" in message or "credit balance" in message:
+        detail = f"{provider} quota exceeded. Check your API plan and billing."
+    else:
+        detail = f"{provider} rate limit hit: {exc}"
+    return JSONResponse(status_code=429, content={"detail": detail})
+
+
 @app.exception_handler(RateLimitError)
 async def openai_rate_limit_handler(_request, exc: RateLimitError):
-    message = str(exc).lower()
-    if "quota" in message or "insufficient_quota" in message:
-        detail = (
-            "Embedding provider quota exceeded. Check your API plan and billing."
-        )
-    else:
-        detail = f"OpenAI rate limit hit for embeddings: {exc}"
-    return JSONResponse(status_code=429, content={"detail": detail})
+    return _rate_limit_response("OpenAI", exc)
+
+
+@app.exception_handler(AnthropicRateLimitError)
+async def anthropic_rate_limit_handler(_request, exc: AnthropicRateLimitError):
+    return _rate_limit_response("Anthropic", exc)
 
 
 @app.get("/")

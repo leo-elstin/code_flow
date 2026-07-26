@@ -12,13 +12,22 @@ to the planner so it can produce a file-accurate plan without stopping to ask
 import json
 from typing import Any
 
+from app.agents.message_trim import trim_tool_messages
 from app.core.config import settings
 from app.core.logging_config import get_logger
-from app.services.generation import acompletion
+from app.services.generation import acompletion, get_generation_model
 from app.services.run_activity import append_activity
 from app.tools.explore_tools import make_explore_tools
 
 logger = get_logger("explorer")
+
+# Tuned for the explorer's much shorter loop (CODE_AGENT_EXPLORER_MAX_STEPS,
+# default 10) versus the dev loop's up to 40 steps — see
+# app.agents.message_trim.trim_tool_messages for why this stubs in batches
+# instead of a plain sliding window.
+_EXPLORER_MSG_KEEP_RECENT_TOOLS = 4
+_EXPLORER_MSG_STUB_LEN = 400
+_EXPLORER_MSG_TRIM_BATCH = 4
 
 EXPLORER_SYSTEM = """You are a code explorer for a Flutter codebase. Your job is to locate the exact
 files the planner needs to implement a ticket — BEFORE any plan is written.
@@ -28,6 +37,13 @@ Work agentically: call tools to search, list directories, and read files. Start 
 references into the concrete implementation. Keep going until you have located the real
 files that implement or must change for this feature: screens/pages, cubits/blocs/state,
 models/DTOs, API requests, dependency-injection registration, and routing.
+
+CRITICAL — issue independent tool calls TOGETHER in a single turn: when you already know
+several searches/reads you need (e.g. reading a screen and its cubit and its DI module),
+issue ALL of those calls in ONE turn rather than one at a time. Only split across turns
+when a call genuinely needs an earlier call's result. Every extra turn re-sends the entire
+conversation so far, so one turn with several calls costs far less than several turns with
+one call each.
 
 Do NOT guess paths — open files to confirm. Prefer citing files you actually read.
 
@@ -96,7 +112,7 @@ async def run_explorer(
     while step < max_steps:
         step += 1
         try:
-            response = await acompletion(model=settings.OPENAI_CHAT_MODEL, messages=messages,
+            response = await acompletion(model=get_generation_model(), messages=messages,
                                          tools=schemas, tool_choice="auto")
         except Exception as exc:  # noqa: BLE001 — bounded by acompletion timeout
             logger.warning("Explorer LLM call failed run_id=%s step=%d: %s", run_id, step, exc)
@@ -132,6 +148,16 @@ async def run_explorer(
                 )
             messages.append({"role": "tool", "tool_call_id": tc.id, "content": str(result)})
 
+        # Without this, each step resends the entire accumulated conversation —
+        # up to 6000 chars per prior read_file result — growing O(n²) over the
+        # loop's up to max_steps turns. Mirrors dev.py's per-step trim.
+        messages = trim_tool_messages(
+            messages,
+            keep_recent=_EXPLORER_MSG_KEEP_RECENT_TOOLS,
+            stub_len=_EXPLORER_MSG_STUB_LEN,
+            batch_size=_EXPLORER_MSG_TRIM_BATCH,
+        )
+
     if not findings:
         # The model explored to the step budget without wrapping up. Force a final
         # answer from what it has already read — no more tools.
@@ -143,7 +169,7 @@ async def run_explorer(
             ),
         })
         try:
-            response = await acompletion(model=settings.OPENAI_CHAT_MODEL, messages=messages)
+            response = await acompletion(model=get_generation_model(), messages=messages)
             findings = _parse_json(response.choices[0].message.content or "")
         except Exception as exc:  # noqa: BLE001
             logger.warning("Explorer finalization failed run_id=%s: %s", run_id, exc)
