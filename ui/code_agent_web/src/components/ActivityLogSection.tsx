@@ -187,6 +187,10 @@ export default function ActivityLogSection({
         {tokenUsage.total_tokens > 0 && (
           <span className="text-[10px] text-slate-500 font-mono">
             {formatTokenCount(tokenUsage.total_tokens)} tokens used
+            {tokenUsage.cached_tokens > 0 && (
+              <> &middot; {formatTokenCount(tokenUsage.cached_tokens)} cached (
+              {Math.round((tokenUsage.cached_tokens / tokenUsage.total_tokens) * 100)}%)</>
+            )}
           </span>
         )}
       </div>

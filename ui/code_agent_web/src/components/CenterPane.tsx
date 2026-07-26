@@ -509,7 +509,7 @@ export default function CenterPane({
               <ActivityLogSection
                 events={activityEvents}
                 currentAction={currentAction || run?.current_action}
-                tokenUsage={tokenUsage?.total_tokens > 0 ? tokenUsage : (run?.token_usage || { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 })}
+                tokenUsage={tokenUsage?.total_tokens > 0 ? tokenUsage : (run?.token_usage || { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0, cached_tokens: 0 })}
                 isRunning={run?.is_running || false}
                 hasRun={!!run}
                 contextBundle={run?.context_bundle}

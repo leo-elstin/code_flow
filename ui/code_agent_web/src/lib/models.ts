@@ -49,6 +49,7 @@ export interface TokenUsage {
   prompt_tokens: number;
   completion_tokens: number;
   total_tokens: number;
+  cached_tokens: number;
 }
 
 export interface CodeAgentExecution {
@@ -137,6 +138,43 @@ export interface JiraStatusCheck {
   configured: boolean;
   base_url?: string;
   user_email?: string;
+}
+
+export type LlmProvider = 'anthropic' | 'openai_gateway' | 'openai';
+
+export interface LlmConfig {
+  provider: LlmProvider;
+  /** Masked preview only (e.g. "sk-…a1b2"); the raw key never leaves the API. */
+  api_key_preview?: string | null;
+  key_configured: boolean;
+  base_url?: string | null;
+  chat_model?: string | null;
+  dev_model?: string | null;
+  /** OpenAI-family only. Unset keeps calls on Chat Completions. */
+  reasoning_effort?: string | null;
+  reasoning_mode?: string | null;
+  /** True when the config came from the backend .env rather than a saved row. */
+  from_env?: boolean;
+  project_id?: number | null;
+  has_override?: boolean | null;
+}
+
+export interface UpdateLlmConfig {
+  provider: LlmProvider | null;
+  /** Omit to keep the stored key; send "" to clear it. */
+  api_key?: string | null;
+  base_url?: string | null;
+  chat_model?: string | null;
+  dev_model?: string | null;
+  reasoning_effort?: string | null;
+  reasoning_mode?: string | null;
+}
+
+export interface LlmTestResult {
+  ok: boolean;
+  provider: string;
+  model?: string | null;
+  error?: string | null;
 }
 
 export interface EpicChildRun {

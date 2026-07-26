@@ -147,6 +147,20 @@ def list_activity(
     return [_row_to_event(row) for row in rows]
 
 
+def clear_activity(run_id: str) -> None:
+    """Wipe all activity (including token events) for *run_id*.
+
+    Used by ``revert_run`` — unlike a retry (which gets its own fresh run_id
+    and is meant to accumulate its own token total independently), a revert
+    reuses the same run_id for what is semantically a brand-new execution.
+    Without this, its activity log and token totals stay contaminated with
+    the discarded attempt's events forever, since token events are otherwise
+    deliberately never pruned (see _MAX_EVENTS_PER_RUN above)."""
+    ensure_schema()
+    with _connect() as conn:
+        conn.execute("DELETE FROM activity_events WHERE run_id = ?", (run_id,))
+
+
 def get_current_action(run_id: str) -> dict[str, Any] | None:
     ensure_schema()
     with _connect() as conn:
@@ -177,16 +191,19 @@ def get_token_totals(run_id: str) -> dict[str, int]:
     prompt = 0
     completion = 0
     total = 0
+    cached = 0
     for row in rows:
         meta = json.loads(row["meta_json"] or "{}")
         prompt += int(meta.get("prompt_tokens") or 0)
         completion += int(meta.get("completion_tokens") or 0)
         total += int(meta.get("total_tokens") or 0)
+        cached += int(meta.get("cached_tokens") or 0)
 
     return {
         "prompt_tokens": prompt,
         "completion_tokens": completion,
         "total_tokens": total,
+        "cached_tokens": cached,
     }
 
 

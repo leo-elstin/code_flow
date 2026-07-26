@@ -28,6 +28,7 @@ import {
   AlertCircle
 } from 'lucide-react';
 import { toast } from 'sonner';
+import LlmProviderSettings from '@/components/LlmProviderSettings';
 
 interface SettingsScreenProps {
   selectedProject: ProjectSummary | null;
@@ -209,6 +210,9 @@ export default function SettingsScreen({
             <TabsTrigger value="api" className="text-xs font-semibold px-4 rounded-lg data-[state=active]:bg-white data-[state=active]:text-slate-800">
               API Connection
             </TabsTrigger>
+            <TabsTrigger value="llm" className="text-xs font-semibold px-4 rounded-lg data-[state=active]:bg-white data-[state=active]:text-slate-800">
+              LLM Provider
+            </TabsTrigger>
             <TabsTrigger value="jira" className="text-xs font-semibold px-4 rounded-lg data-[state=active]:bg-white data-[state=active]:text-slate-800">
               Jira Integration
             </TabsTrigger>
@@ -247,6 +251,11 @@ export default function SettingsScreen({
                 </form>
               </CardContent>
             </Card>
+          </TabsContent>
+
+          {/* LLM Provider Tab */}
+          <TabsContent value="llm">
+            <LlmProviderSettings selectedProject={selectedProject} />
           </TabsContent>
 
           {/* Jira Integration Tab */}

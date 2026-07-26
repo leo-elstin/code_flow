@@ -142,6 +142,28 @@ def _branch_scan_candidates(
     return candidates
 
 
+_BASE_REF_PRIORITY = {"ticket_id": 0, "branch_name": 1, "epic_branch": 2}
+
+
+def select_base_ref(prior_work: dict[str, Any]) -> dict[str, Any] | None:
+    """Pick the one candidate confident enough to branch a run's worktree from.
+
+    A ``title`` match comes from a *different* ticket that merely shares a
+    title — not confident enough to rebase this run's work onto. A candidate
+    with an empty diff has nothing to offer (either it was never diffed
+    successfully, or it's already merged into the default branch, in which
+    case a HEAD-based worktree already contains it)."""
+    ranked = [
+        c
+        for c in prior_work.get("candidates", [])
+        if c.get("match_reason") in _BASE_REF_PRIORITY and c.get("changed_files")
+    ]
+    if not ranked:
+        return None
+    ranked.sort(key=lambda c: _BASE_REF_PRIORITY[c["match_reason"]])
+    return ranked[0]
+
+
 def discover_prior_work(
     ticket_id: int | None,
     project_path: str,

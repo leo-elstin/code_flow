@@ -35,6 +35,11 @@ async def run_qa(
             title="QA review started",
         )
 
+    # plan_markdown is a prose restatement of fields already present elsewhere
+    # in this same dict (feature_summary, architecture, acceptance_criteria,
+    # ...) — it exists for the human-facing plan review UI, not this review.
+    plan = {k: v for k, v in plan.items() if k != "plan_markdown"}
+
     widget_trees: list[dict[str, Any]] = []
     for item in diffs:
         rel = item.get("path", "")

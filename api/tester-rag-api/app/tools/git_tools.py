@@ -274,13 +274,20 @@ def list_branches_matching(repo_path: str, tokens: list[str]) -> list[str]:
     return matches
 
 
+def ref_exists(repo_path: str, ref: str) -> bool:
+    """Whether *ref* (branch, remote-tracking ref, tag, or commit) currently
+    resolves in *repo_path*. Used to re-check a discovered branch is still
+    there right before basing a worktree on it."""
+    proc = _run_git(["rev-parse", "-q", "--verify", f"{ref}^{{commit}}"], cwd=repo_path)
+    return proc.returncode == 0
+
+
 def _resolve_ref(repo_path: str, name: str) -> str:
     """Resolve *name* to a usable git ref: prefer a local branch, fall back to
     the ``origin/`` remote-tracking ref (matched branches may be remote-only)."""
     if branch_exists(repo_path, name):
         return name
-    remote = _run_git(["rev-parse", "-q", "--verify", f"refs/remotes/origin/{name}"], cwd=repo_path)
-    if remote.returncode == 0:
+    if ref_exists(repo_path, f"refs/remotes/origin/{name}"):
         return f"origin/{name}"
     return name
 

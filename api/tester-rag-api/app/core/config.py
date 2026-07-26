@@ -80,6 +80,10 @@ class Settings:
     # indefinitely, so this bounds every completion call.
     CODE_AGENT_LLM_TIMEOUT: int = int(os.getenv("CODE_AGENT_LLM_TIMEOUT", "120"))
     CODE_AGENT_LLM_MAX_RETRIES: int = int(os.getenv("CODE_AGENT_LLM_MAX_RETRIES", "1"))
+    # Anthropic requires max_tokens on every request (OpenAI treats it as
+    # optional), so the Anthropic client needs a default. 8192 is accepted by
+    # every current Claude model and leaves the dev loop room to write files.
+    CODE_AGENT_LLM_MAX_TOKENS: int = int(os.getenv("CODE_AGENT_LLM_MAX_TOKENS", "8192"))
     # Timeout (seconds) for Jira REST calls so referenced-ticket resolution and
     # sync can never hang a run.
     CODE_AGENT_JIRA_TIMEOUT: int = int(os.getenv("CODE_AGENT_JIRA_TIMEOUT", "20"))

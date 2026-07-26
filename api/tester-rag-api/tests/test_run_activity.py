@@ -2,6 +2,7 @@ import pytest
 
 from app.services.run_activity import (
     append_activity,
+    clear_activity,
     get_current_action,
     get_token_totals,
     list_activity,
@@ -108,17 +109,48 @@ def test_token_totals_aggregate(activity_db):
         type="token",
         phase="planner",
         title="t1",
-        meta={"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+        meta={"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15, "cached_tokens": 2},
     )
     append_activity(
         run_id,
         type="token",
         phase="dev",
         title="t2",
-        meta={"prompt_tokens": 20, "completion_tokens": 10, "total_tokens": 30},
+        meta={"prompt_tokens": 20, "completion_tokens": 10, "total_tokens": 30, "cached_tokens": 18},
     )
 
     totals = get_token_totals(run_id)
     assert totals["prompt_tokens"] == 30
     assert totals["completion_tokens"] == 15
     assert totals["total_tokens"] == 45
+    assert totals["cached_tokens"] == 20
+
+
+def test_clear_activity_wipes_events_and_token_totals_for_run_id_only(activity_db):
+    """revert_run reuses one run_id across what are semantically separate
+    executions. clear_activity must reset that run_id's log completely
+    (including token events, which append_activity otherwise never prunes)
+    without touching any other run_id's data."""
+    run_id = "run-to-clear"
+    other_run_id = "run-untouched"
+
+    append_activity(run_id, type="status", phase="planner", title="Planning started")
+    append_activity(
+        run_id, type="token", phase="dev", title="t1",
+        meta={"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15, "cached_tokens": 3},
+    )
+    append_activity(other_run_id, type="status", phase="planner", title="Unrelated run")
+
+    clear_activity(run_id)
+
+    assert list_activity(run_id) == []
+    assert get_token_totals(run_id) == {
+        "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0, "cached_tokens": 0,
+    }
+    # A fresh append after clearing starts sequencing from scratch, not
+    # continuing the old seq counter.
+    event = append_activity(run_id, type="status", phase="planner", title="Re-planned")
+    assert event["seq"] == 1
+
+    # The other run_id's activity is untouched.
+    assert len(list_activity(other_run_id)) == 1

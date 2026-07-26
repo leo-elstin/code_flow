@@ -111,3 +111,40 @@ def test_run_explorer_respects_step_cap(tmp_path, monkeypatch):
     monkeypatch.setattr(ex, "append_activity", lambda *a, **k: {})
     findings = asyncio.run(ex.run_explorer("x", repo, run_id=None, max_steps=3))
     assert findings == {}  # never produced JSON, but returned cleanly
+
+
+def test_run_explorer_trims_old_tool_results_within_the_loop(tmp_path, monkeypatch):
+    """Without per-step trimming, every step resends the whole accumulated
+    conversation — each prior read_file result up to 6000 chars — growing
+    O(n^2) over the loop. This is the same bug class _trim_dev_messages fixed
+    in the dev loop; the explorer loop needs the equivalent."""
+    repo = _mkrepo(tmp_path)
+    (tmp_path / "lib" / "big.dart").write_text("X" * 2000)
+
+    captured_messages: list[list[dict]] = []
+    STEPS_WITH_TOOL_CALLS = 8
+
+    async def fake_acompletion(*, model, messages, **kw):
+        captured_messages.append([dict(m) for m in messages])
+        step = len(captured_messages)
+        if step > STEPS_WITH_TOOL_CALLS:
+            return _resp(_FakeMsg(content=json.dumps({
+                "relevant_files": [], "entry_points": [], "key_findings": [], "gaps": [],
+            })))
+        return _resp(_FakeMsg(tool_calls=[_FakeToolCall(f"c{step}", "read_file", {"path": "lib/big.dart"})]))
+
+    monkeypatch.setattr(ex, "acompletion", fake_acompletion)
+    monkeypatch.setattr(ex, "append_activity", lambda *a, **k: {})
+
+    asyncio.run(ex.run_explorer("x", repo, run_id=None, max_steps=STEPS_WITH_TOOL_CALLS + 1))
+
+    # By the final call, earlier tool results (beyond the keep-recent window)
+    # must already be stubbed — proving trimming ran mid-loop, not just once
+    # at the end.
+    final_sent = captured_messages[-1]
+    tool_msgs = [m for m in final_sent if m.get("role") == "tool"]
+    assert len(tool_msgs) == STEPS_WITH_TOOL_CALLS
+    stubbed = [m for m in tool_msgs if "older tool output trimmed" in m["content"]]
+    full = [m for m in tool_msgs if len(m["content"]) >= 2000]
+    assert len(stubbed) > 0
+    assert len(full) <= 4

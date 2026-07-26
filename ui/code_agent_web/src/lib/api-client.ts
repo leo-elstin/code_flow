@@ -10,6 +10,9 @@ import {
   JiraConfig,
   JiraSyncResult,
   JiraStatusCheck,
+  LlmConfig,
+  LlmTestResult,
+  UpdateLlmConfig,
   EpicRun,
   ClarifyAnswer,
   SimulatorDevice,
@@ -308,6 +311,38 @@ export class CodeAgentApiClient {
     return this._request<any>(
       `/api/code-agent/projects/${projectId}/jira/transitions?issue_key=${encodeURIComponent(issueKey)}`
     );
+  }
+
+  static async getLlmConfig(): Promise<LlmConfig> {
+    return this._request<LlmConfig>('/api/code-agent/llm/config');
+  }
+
+  static async updateLlmConfig(config: UpdateLlmConfig): Promise<LlmConfig> {
+    return this._request<LlmConfig>('/api/code-agent/llm/config', {
+      method: 'PUT',
+      body: JSON.stringify(config),
+    });
+  }
+
+  static async testLlmConfig(config: UpdateLlmConfig): Promise<LlmTestResult> {
+    return this._request<LlmTestResult>('/api/code-agent/llm/test', {
+      method: 'POST',
+      body: JSON.stringify(config),
+    });
+  }
+
+  static async getProjectLlmConfig(projectId: number): Promise<LlmConfig> {
+    return this._request<LlmConfig>(`/api/code-agent/projects/${projectId}/llm/config`);
+  }
+
+  static async updateProjectLlmConfig(
+    projectId: number,
+    config: UpdateLlmConfig
+  ): Promise<LlmConfig> {
+    return this._request<LlmConfig>(`/api/code-agent/projects/${projectId}/llm/config`, {
+      method: 'PUT',
+      body: JSON.stringify(config),
+    });
   }
 
   // -- Epic-level execution --------------------------------------------------

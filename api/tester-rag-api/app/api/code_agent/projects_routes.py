@@ -20,6 +20,8 @@ from app.api.code_agent.schemas import (
     JiraStatusCheckResponse,
     JiraSyncResponse,
     JiraTransitionResponse,
+    LlmConfigResponse,
+    LlmTestResponse,
     ProjectContextResponse,
     ProjectResponse,
     ProjectSkillSummary,
@@ -28,7 +30,9 @@ from app.api.code_agent.schemas import (
     TicketResponse,
     TicketsListResponse,
     UpdateJiraConfigRequest,
+    UpdateLlmConfigRequest,
     UpdateProjectContextRequest,
+    UpdateProjectLlmConfigRequest,
 )
 from app.services.folder_picker import pick_folder
 from app.services.agents_md_generator import (
@@ -41,6 +45,17 @@ from app.services.project_context_generator import generate_project_context
 from app.services.project_skills import normalize_skill_ids
 from app.services.jira_service import JiraService
 from app.services.jira_sync import sync_jira_tickets
+from app.services.llm_config import global_config
+from app.services.llm_providers import clear_client_cache, get_client
+from app.services.llm_providers.base import LLMConfig
+from app.services.llm_settings_store import (
+    PROVIDERS,
+    clear_project_override,
+    get_global_config,
+    get_project_override,
+    save_global_config,
+    save_project_override,
+)
 from app.services.project_ticket_store import (
     create_ticket,
     delete_ticket,
@@ -335,3 +350,173 @@ async def get_jira_transitions(project_id: int, issue_key: str):
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Failed to get transitions: {exc}")
     return JiraTransitionResponse(transitions=transitions)
+
+
+# ---------------------------------------------------------------------------
+# LLM provider configuration
+# ---------------------------------------------------------------------------
+
+def _mask_key(api_key: str | None) -> str | None:
+    """Show just enough of a key to recognise it, never enough to use it."""
+    if not api_key:
+        return None
+    if len(api_key) <= 8:
+        return "…" + api_key[-2:]
+    return f"{api_key[:3]}…{api_key[-4:]}"
+
+
+def _validate_provider(provider: str) -> None:
+    if provider not in PROVIDERS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown provider '{provider}'. Expected one of {sorted(PROVIDERS)}.",
+        )
+
+
+@router.get("/llm/config", response_model=LlmConfigResponse)
+async def get_llm_config():
+    """The effective global config, whether it came from the DB or .env."""
+    saved = get_global_config()
+    config = global_config()
+    return LlmConfigResponse(
+        provider=config.provider,
+        api_key_preview=_mask_key(config.api_key),
+        key_configured=bool(config.api_key),
+        base_url=config.base_url,
+        chat_model=config.chat_model,
+        dev_model=config.dev_model,
+        reasoning_effort=config.reasoning_effort,
+        reasoning_mode=config.reasoning_mode,
+        from_env=saved is None,
+    )
+
+
+@router.put("/llm/config", response_model=LlmConfigResponse)
+async def put_llm_config(body: UpdateLlmConfigRequest):
+    _validate_provider(body.provider)
+    try:
+        save_global_config(
+            provider=body.provider,
+            api_key=body.api_key,
+            base_url=body.base_url,
+            chat_model=body.chat_model,
+            dev_model=body.dev_model,
+            reasoning_effort=body.reasoning_effort,
+            reasoning_mode=body.reasoning_mode,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    # Cached clients hold the old credential; drop them so the very next call
+    # uses the new config without a server restart.
+    clear_client_cache()
+    return await get_llm_config()
+
+
+@router.post("/llm/test", response_model=LlmTestResponse)
+async def post_test_llm_config(body: UpdateLlmConfigRequest):
+    """Verify a config actually authenticates, before it gets saved.
+
+    Credentials that fail open are the reason this exists — the same fail-fast
+    reasoning as the Jira /myself check.
+    """
+    _validate_provider(body.provider)
+
+    # An omitted key means "test the stored one", matching PUT semantics.
+    api_key = body.api_key
+    if api_key is None:
+        stored = get_global_config()
+        api_key = stored.get("api_key") if stored else global_config().api_key
+
+    config = LLMConfig(
+        provider=body.provider,
+        api_key=api_key,
+        base_url=body.base_url,
+        chat_model=body.chat_model,
+        dev_model=body.dev_model,
+        reasoning_effort=body.reasoning_effort,
+        reasoning_mode=body.reasoning_mode,
+    )
+    if not config.api_key:
+        return LlmTestResponse(ok=False, provider=config.provider, error="No API key configured.")
+    if not config.chat_model:
+        return LlmTestResponse(ok=False, provider=config.provider, error="No chat model configured.")
+
+    try:
+        # No max_tokens cap: reasoning models spend their budget on reasoning
+        # tokens and fail outright on a tiny limit. "ping" keeps the reply short
+        # on its own, and the Anthropic client supplies its required default.
+        await get_client(config).acompletion(
+            model=config.chat_model,
+            messages=[{"role": "user", "content": "Reply with the single word: ok"}],
+        )
+    except Exception as exc:  # noqa: BLE001 — surfacing the provider's own message is the point
+        return LlmTestResponse(
+            ok=False, provider=config.provider, model=config.chat_model, error=str(exc)
+        )
+    return LlmTestResponse(ok=True, provider=config.provider, model=config.chat_model)
+
+
+@router.get("/projects/{project_id}/llm/config", response_model=LlmConfigResponse)
+async def get_project_llm_config(project_id: int):
+    project = get_project(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    override = get_project_override(project_id)
+    if not override:
+        # No override: report the global config the project actually resolves
+        # to, flagged so the UI can render it as inherited.
+        config = global_config()
+        return LlmConfigResponse(
+            provider=config.provider,
+            api_key_preview=_mask_key(config.api_key),
+            key_configured=bool(config.api_key),
+            base_url=config.base_url,
+            chat_model=config.chat_model,
+            dev_model=config.dev_model,
+            reasoning_effort=config.reasoning_effort,
+            reasoning_mode=config.reasoning_mode,
+            from_env=get_global_config() is None,
+            project_id=project_id,
+            has_override=False,
+        )
+
+    return LlmConfigResponse(
+        provider=override["provider"],
+        api_key_preview=_mask_key(override.get("api_key")),
+        key_configured=bool(override.get("api_key")),
+        base_url=override.get("base_url"),
+        chat_model=override.get("chat_model"),
+        dev_model=override.get("dev_model"),
+        reasoning_effort=override.get("reasoning_effort"),
+        reasoning_mode=override.get("reasoning_mode"),
+        project_id=project_id,
+        has_override=True,
+    )
+
+
+@router.put("/projects/{project_id}/llm/config", response_model=LlmConfigResponse)
+async def put_project_llm_config(project_id: int, body: UpdateProjectLlmConfigRequest):
+    if not get_project(project_id):
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    if body.provider is None:
+        clear_project_override(project_id)
+    else:
+        _validate_provider(body.provider)
+        try:
+            save_project_override(
+                project_id,
+                provider=body.provider,
+                api_key=body.api_key,
+                base_url=body.base_url,
+                chat_model=body.chat_model,
+                dev_model=body.dev_model,
+                reasoning_effort=body.reasoning_effort,
+                reasoning_mode=body.reasoning_mode,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+
+    clear_client_cache()
+    return await get_project_llm_config(project_id)

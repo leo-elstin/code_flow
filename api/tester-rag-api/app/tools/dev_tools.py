@@ -106,11 +106,25 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "read_file_tool",
-            "description": "Read the contents of a file at the given relative path in the worktree.",
+            "description": (
+                "Read the contents of a file at the given relative path in the worktree. "
+                "Reads the whole file by default. For a large file where you only need one "
+                "part (e.g. one method, one widget), pass offset (1-based line number) and "
+                "limit (number of lines) to read just that range instead of paying the token "
+                "cost of the entire file — the response shows which lines you got."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "path": {"type": "string", "description": "Relative path to the file"},
+                    "offset": {
+                        "type": "integer",
+                        "description": "1-based line number to start reading from. Omit to read from the start.",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Number of lines to read from offset. Omit to read to the end of the file.",
+                    },
                 },
                 "required": ["path"],
             },
@@ -306,9 +320,9 @@ def make_dev_tools(
             "Do not modify out-of-scope files."
         )
 
-    def read_file_tool(path: str) -> str:
+    def read_file_tool(path: str, offset: int | None = None, limit: int | None = None) -> str:
         try:
-            return read_file(worktree_path, path)
+            return read_file(worktree_path, path, offset=offset or 0, limit=limit)
         except Exception as exc:
             return f"Error reading file {path}: {exc}"
 

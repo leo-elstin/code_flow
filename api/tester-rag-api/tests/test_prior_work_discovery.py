@@ -119,6 +119,12 @@ def test_resolve_default_branch_falls_back_to_common_names(git_repo):
     assert git_tools.resolve_default_branch(str(git_repo)) == "main"
 
 
+def test_ref_exists(git_repo):
+    subprocess.run(["git", "branch", "agent/abc123"], cwd=git_repo, check=True)
+    assert git_tools.ref_exists(str(git_repo), "agent/abc123") is True
+    assert git_tools.ref_exists(str(git_repo), "does-not-exist") is False
+
+
 def test_list_branches_matching_finds_by_token_and_excludes_agent(git_repo):
     subprocess.run(["git", "branch", "feature/MMA-3480-multi-container"], cwd=git_repo, check=True)
     subprocess.run(["git", "branch", "feature/MMA-9999-unrelated"], cwd=git_repo, check=True)
@@ -279,3 +285,80 @@ def test_discover_prior_work_never_raises_on_failure(monkeypatch):
     result = prior_work_discovery.discover_prior_work(42, "/tmp/proj")
     assert result["found"] is False
     assert result["candidates"] == []
+
+
+# ---------------------------------------------------------------------------
+# prior_work_discovery.select_base_ref
+# ---------------------------------------------------------------------------
+
+def _candidate(branch, match_reason, changed_files=None):
+    return {
+        "branch": branch,
+        "match_reason": match_reason,
+        "changed_files": changed_files if changed_files is not None else ["lib/x.dart"],
+    }
+
+
+def test_select_base_ref_prefers_ticket_id_over_branch_name_and_epic_branch():
+    prior_work = {
+        "candidates": [
+            _candidate("feature/MMA-3480-x", "epic_branch"),
+            _candidate("feature/MMA-3481-x", "branch_name"),
+            _candidate("agent/r1", "ticket_id"),
+        ]
+    }
+    winner = prior_work_discovery.select_base_ref(prior_work)
+    assert winner["branch"] == "agent/r1"
+
+
+def test_select_base_ref_prefers_branch_name_over_epic_branch():
+    prior_work = {
+        "candidates": [
+            _candidate("feature/MMA-3480-x", "epic_branch"),
+            _candidate("feature/MMA-3481-x", "branch_name"),
+        ]
+    }
+    winner = prior_work_discovery.select_base_ref(prior_work)
+    assert winner["branch"] == "feature/MMA-3481-x"
+
+
+def test_select_base_ref_excludes_title_matches():
+    prior_work = {"candidates": [_candidate("agent/r9", "title")]}
+    assert prior_work_discovery.select_base_ref(prior_work) is None
+
+
+def test_select_base_ref_excludes_empty_diff_candidates():
+    prior_work = {"candidates": [_candidate("agent/r1", "ticket_id", changed_files=[])]}
+    assert prior_work_discovery.select_base_ref(prior_work) is None
+
+
+def test_select_base_ref_returns_none_when_no_candidates():
+    assert prior_work_discovery.select_base_ref({"candidates": []}) is None
+    assert prior_work_discovery.select_base_ref({}) is None
+
+
+# ---------------------------------------------------------------------------
+# runner._resolve_discovered_base_ref (approve_run's fallback wiring)
+# ---------------------------------------------------------------------------
+
+def test_resolve_discovered_base_ref_returns_selected_branch_when_it_still_resolves(git_repo):
+    from app.orchestration.runner import _resolve_discovered_base_ref
+
+    subprocess.run(["git", "branch", "feature/MMA-3480-multi-container"], cwd=git_repo, check=True)
+    context_bundle = {"prior_work": {"selected_branch": "feature/MMA-3480-multi-container"}}
+
+    assert _resolve_discovered_base_ref(str(git_repo), context_bundle) == "feature/MMA-3480-multi-container"
+
+
+def test_resolve_discovered_base_ref_falls_back_to_none_when_branch_deleted(git_repo):
+    from app.orchestration.runner import _resolve_discovered_base_ref
+
+    context_bundle = {"prior_work": {"selected_branch": "feature/long-gone"}}
+    assert _resolve_discovered_base_ref(str(git_repo), context_bundle) is None
+
+
+def test_resolve_discovered_base_ref_returns_none_when_nothing_was_selected(git_repo):
+    from app.orchestration.runner import _resolve_discovered_base_ref
+
+    assert _resolve_discovered_base_ref(str(git_repo), {"prior_work": {"selected_branch": None}}) is None
+    assert _resolve_discovered_base_ref(str(git_repo), {}) is None

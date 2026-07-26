@@ -218,6 +218,57 @@ def test_runner_retry_run_without_worktree():
     asyncio.run(_run())
 
 
+def test_runner_revert_run_clears_activity_log_for_reused_run_id():
+    """revert_run reuses the SAME run_id for what is semantically a brand-new
+    execution (unlike retry_run, which gets its own fresh run_id). Without
+    clearing the old activity/token log for that run_id first, the discarded
+    attempt's events (and token totals, which are deliberately never pruned)
+    would keep contaminating every subsequent attempt on this same run_id."""
+    import asyncio
+
+    async def _run():
+        from app.orchestration.runner import CodeAgentRunner
+
+        test_runner = CodeAgentRunner()
+        dummy_task = MagicMock()
+        mock_graph = AsyncMock()
+
+        with patch.object(test_runner, "get_state", new_callable=AsyncMock) as mock_get, \
+             patch.object(test_runner, "_cancel_task") as mock_cancel, \
+             patch("asyncio.to_thread", new_callable=AsyncMock) as mock_to_thread, \
+             patch.object(test_runner, "_clear_checkpoints") as mock_clear_checkpoints, \
+             patch("app.orchestration.runner.clear_activity") as mock_clear_activity, \
+             patch.object(test_runner, "_checkpointer") as mock_chk, \
+             patch.object(test_runner, "_compile", new_callable=AsyncMock) as mock_compile, \
+             patch("app.orchestration.runner.upsert_run") as mock_upsert, \
+             patch("app.orchestration.runner.set_ticket_run") as mock_set_ticket, \
+             patch("asyncio.create_task", return_value=dummy_task):
+
+            mock_compile.return_value = mock_graph
+            state = {
+                "status": "failed",
+                "project_path": "/foo",
+                "worktree_path": "/foo/.worktrees/ok-run",
+                "workspace_mode": "worktree",
+                "user_request": "add water",
+                "run_id": "ok-run",
+                "ticket_id": 123,
+            }
+            mock_get.return_value = state
+
+            await test_runner.revert_run("ok-run")
+
+            mock_cancel.assert_called_once_with("ok-run")
+            mock_to_thread.assert_called_once()
+            # Both clears happen for the SAME reused run_id, checkpoints first
+            # (per the code's own ordering), then activity.
+            mock_clear_checkpoints.assert_called_once_with("ok-run")
+            mock_clear_activity.assert_called_once_with("ok-run")
+            mock_set_ticket.assert_called_once_with(123, "ok-run", status="planning")
+
+    asyncio.run(_run())
+
+
 def test_start_epic_run_passes_auto_approve(client):
     """POST /epics/{id}/run forwards the optional auto_approve body flag."""
     from app.api.code_agent import routes as routes_mod
