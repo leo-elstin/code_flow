@@ -13,6 +13,7 @@ import {
   LlmConfig,
   LlmTestResult,
   UpdateLlmConfig,
+  DevEngine,
   EpicRun,
   ClarifyAnswer,
   SimulatorDevice,
@@ -342,6 +343,16 @@ export class CodeAgentApiClient {
     return this._request<LlmConfig>(`/api/code-agent/projects/${projectId}/llm/config`, {
       method: 'PUT',
       body: JSON.stringify(config),
+    });
+  }
+
+  static async updateProjectDevEngine(
+    projectId: number,
+    engine: DevEngine
+  ): Promise<ProjectSummary> {
+    return this._request<ProjectSummary>(`/api/code-agent/projects/${projectId}/dev-engine`, {
+      method: 'PUT',
+      body: JSON.stringify({ engine }),
     });
   }
 

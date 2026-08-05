@@ -29,6 +29,7 @@ from app.api.code_agent.schemas import (
     ProjectsListResponse,
     TicketResponse,
     TicketsListResponse,
+    UpdateDevEngineRequest,
     UpdateJiraConfigRequest,
     UpdateLlmConfigRequest,
     UpdateProjectContextRequest,
@@ -57,6 +58,7 @@ from app.services.llm_settings_store import (
     save_project_override,
 )
 from app.services.project_ticket_store import (
+    DEV_ENGINES,
     create_ticket,
     delete_ticket,
     delete_project,
@@ -64,6 +66,7 @@ from app.services.project_ticket_store import (
     get_ticket,
     list_projects,
     list_tickets,
+    update_dev_engine,
     update_project_context,
     update_project_jira_config,
     upsert_project,
@@ -119,6 +122,19 @@ async def remove_project(project_id: int):
     deleted = delete_project(project_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Project not found")
+
+
+@router.put("/projects/{project_id}/dev-engine", response_model=ProjectResponse)
+async def put_project_dev_engine(project_id: int, body: UpdateDevEngineRequest):
+    if not get_project(project_id):
+        raise HTTPException(status_code=404, detail="Project not found")
+    if body.engine not in DEV_ENGINES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown dev_engine '{body.engine}'. Expected one of {sorted(DEV_ENGINES)}.",
+        )
+    updated = update_dev_engine(project_id, body.engine)
+    return ProjectResponse(**updated)
 
 
 @router.post("/projects/{project_id}/tickets", response_model=TicketResponse)

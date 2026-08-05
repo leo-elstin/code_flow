@@ -29,6 +29,7 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import LlmProviderSettings from '@/components/LlmProviderSettings';
+import DevEngineSettings from '@/components/DevEngineSettings';
 
 interface SettingsScreenProps {
   selectedProject: ProjectSummary | null;
@@ -213,6 +214,9 @@ export default function SettingsScreen({
             <TabsTrigger value="llm" className="text-xs font-semibold px-4 rounded-lg data-[state=active]:bg-white data-[state=active]:text-slate-800">
               LLM Provider
             </TabsTrigger>
+            <TabsTrigger value="dev-engine" disabled={!selectedProject} className="text-xs font-semibold px-4 rounded-lg data-[state=active]:bg-white data-[state=active]:text-slate-800">
+              Dev Engine
+            </TabsTrigger>
             <TabsTrigger value="jira" className="text-xs font-semibold px-4 rounded-lg data-[state=active]:bg-white data-[state=active]:text-slate-800">
               Jira Integration
             </TabsTrigger>
@@ -256,6 +260,11 @@ export default function SettingsScreen({
           {/* LLM Provider Tab */}
           <TabsContent value="llm">
             <LlmProviderSettings selectedProject={selectedProject} />
+          </TabsContent>
+
+          {/* Dev Engine Tab */}
+          <TabsContent value="dev-engine">
+            <DevEngineSettings selectedProject={selectedProject} />
           </TabsContent>
 
           {/* Jira Integration Tab */}

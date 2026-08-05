@@ -80,6 +80,12 @@ class Settings:
     # indefinitely, so this bounds every completion call.
     CODE_AGENT_LLM_TIMEOUT: int = int(os.getenv("CODE_AGENT_LLM_TIMEOUT", "120"))
     CODE_AGENT_LLM_MAX_RETRIES: int = int(os.getenv("CODE_AGENT_LLM_MAX_RETRIES", "1"))
+    # Separate, much longer timeout for the Claude Code CLI dev engine (pilot):
+    # it runs a whole multi-turn agentic subprocess, not a single completion
+    # call, so CODE_AGENT_LLM_TIMEOUT (bounds one API call) doesn't apply.
+    CODE_AGENT_CLI_TIMEOUT_SECONDS: int = int(
+        os.getenv("CODE_AGENT_CLI_TIMEOUT_SECONDS", "600")
+    )
     # Anthropic requires max_tokens on every request (OpenAI treats it as
     # optional), so the Anthropic client needs a default. 8192 is accepted by
     # every current Claude model and leaves the dev loop room to write files.

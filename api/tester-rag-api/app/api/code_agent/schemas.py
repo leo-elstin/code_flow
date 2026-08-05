@@ -90,8 +90,14 @@ class ProjectResponse(BaseModel):
     id: int
     name: str
     path: str
+    # Which engine runs the dev node: "api" (default) or "claude_code_cli" (pilot).
+    dev_engine: str = "api"
     created_at: str
     updated_at: str
+
+
+class UpdateDevEngineRequest(BaseModel):
+    engine: str
 
 
 class ProjectSkillSummary(BaseModel):

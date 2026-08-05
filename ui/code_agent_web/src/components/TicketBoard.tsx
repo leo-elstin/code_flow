@@ -469,14 +469,14 @@ export default function TicketBoard({
             <RefreshCw size={12} className={isLoadingTickets ? 'animate-spin' : ''} aria-hidden />
           </button>
 
-          {/* New ticket */}
+          {/* Create ticket */}
           <Button
             onClick={() => setIsDialogOpen(true)}
             disabled={!selectedProject}
             size="sm"
             className="h-9 bg-[#ec3013] hover:bg-[#dd2b0f] text-white font-semibold text-xs px-3.5 gap-1 rounded-lg shadow-sm"
           >
-            <Plus size={12} aria-hidden />New ticket
+            <Plus size={12} aria-hidden />Create ticket
           </Button>
         </div>
       </div>

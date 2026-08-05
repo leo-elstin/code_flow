@@ -3,15 +3,29 @@ import asyncio
 from langgraph.graph import END, START, StateGraph
 
 from app.agents.roles.dev import run_dev
+from app.agents.roles.dev_cli import run_dev_cli
 from app.agents.roles.planner import run_planner
 from app.agents.roles.qa import run_qa
 from app.agents.roles.verifier import run_verifier
 from app.core.config import settings
 from app.core.logging_config import get_logger
 from app.orchestration.state import FeatureRunState
+from app.services.project_ticket_store import get_dev_engine, get_project_by_path
 from app.services.run_activity import append_activity
 
 logger = get_logger("graph")
+
+
+def _resolve_dev_engine(project_path: str) -> str:
+    """Which engine runs the dev node for this project — "api" (default) or
+    "claude_code_cli" (pilot). Falls back to "api" on any lookup failure,
+    same fail-open reasoning as resolve_llm_config()'s project override."""
+    try:
+        project = get_project_by_path(project_path)
+        return get_dev_engine(int(project["id"])) if project else "api"
+    except Exception:  # noqa: BLE001 — engine lookup must never fail a run
+        logger.warning("dev_engine lookup failed for project_path=%s", project_path, exc_info=True)
+        return "api"
 
 
 async def _enrich_linked_issues_context(state: FeatureRunState) -> str | None:
@@ -101,17 +115,31 @@ async def dev_node(state: FeatureRunState) -> dict:
             title=f"Entering development (iteration {iteration})",
         )
 
-    logger.info("Dev node run_id=%s iteration=%s", run_id, iteration)
+    engine = _resolve_dev_engine(state["project_path"])
+    logger.info("Dev node run_id=%s iteration=%s engine=%s", run_id, iteration, engine)
     try:
-        result = await run_dev(
-            plan=state.get("plan", {}),
-            context_bundle=state.get("context_bundle", {}),
-            worktree_path=worktree_path,
-            project_path=state["project_path"],
-            verifier_report=state.get("verifier_report") or None,
-            run_id=run_id or None,
-            prior_messages=state.get("dev_messages") or None,
-        )
+        if engine == "claude_code_cli":
+            result = await run_dev_cli(
+                plan=state.get("plan", {}),
+                context_bundle=state.get("context_bundle", {}),
+                worktree_path=worktree_path,
+                project_path=state["project_path"],
+                verifier_report=state.get("verifier_report") or None,
+                run_id=run_id or None,
+                prior_session_id=state.get("dev_cli_session_id") or None,
+            )
+            engine_update = {"dev_cli_session_id": result.get("dev_cli_session_id")}
+        else:
+            result = await run_dev(
+                plan=state.get("plan", {}),
+                context_bundle=state.get("context_bundle", {}),
+                worktree_path=worktree_path,
+                project_path=state["project_path"],
+                verifier_report=state.get("verifier_report") or None,
+                run_id=run_id or None,
+                prior_messages=state.get("dev_messages") or None,
+            )
+            engine_update = {"dev_messages": result.get("dev_messages", [])}
         logger.info(
             "Dev success run_id=%s file_changes=%d",
             run_id,
@@ -122,8 +150,8 @@ async def dev_node(state: FeatureRunState) -> dict:
             "file_changes": result.get("file_changes", []),
             "truncated": result.get("truncated", False),
             "messages": result.get("messages", []),
-            "dev_messages": result.get("dev_messages", []),
             "dev_build_runner": result.get("dev_build_runner", {}),
+            **engine_update,
         }
     except Exception:
         logger.exception("Dev error run_id=%s", run_id)

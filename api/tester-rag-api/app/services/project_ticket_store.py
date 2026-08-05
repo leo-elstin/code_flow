@@ -12,6 +12,11 @@ _DB_PATH = Path(settings.CODE_AGENT_DATA_DIR) / "code_agent_projects.db"
 
 TICKET_TYPES = {"feature", "bug"}
 
+# Which engine runs the dev node for this project. "api" (default, unchanged
+# hand-rolled tool-calling loop) or "claude_code_cli" (pilot: shells out to
+# the Claude Code CLI's own agent loop — see app/agents/roles/dev_cli.py).
+DEV_ENGINES = {"api", "claude_code_cli"}
+
 
 @contextmanager
 def _connect():
@@ -73,6 +78,7 @@ def ensure_schema() -> None:
         _ensure_project_context_columns(conn)
         _ensure_jira_columns(conn)
         _ensure_llm_columns(conn)
+        _ensure_dev_engine_column(conn)
         conn.commit()
 
 
@@ -127,6 +133,12 @@ def _ensure_llm_columns(conn: sqlite3.Connection) -> None:
             conn.execute(f"ALTER TABLE projects ADD COLUMN {column} TEXT")
 
 
+def _ensure_dev_engine_column(conn: sqlite3.Connection) -> None:
+    project_cols = {row[1] for row in conn.execute("PRAGMA table_info(projects)").fetchall()}
+    if "dev_engine" not in project_cols:
+        conn.execute("ALTER TABLE projects ADD COLUMN dev_engine TEXT")
+
+
 def _row_to_project(row: sqlite3.Row) -> dict:
     return {
         "id": int(row["id"]),
@@ -137,6 +149,8 @@ def _row_to_project(row: sqlite3.Row) -> dict:
         "dev_skill_ids": row["dev_skill_ids"] if "dev_skill_ids" in row.keys() else None,
         "jira_jql": row["jira_jql"] if "jira_jql" in row.keys() else None,
         "jira_status_mapping": row["jira_status_mapping"] if "jira_status_mapping" in row.keys() else None,
+        # NULL means the project hasn't opted into the pilot engine yet.
+        "dev_engine": (row["dev_engine"] if "dev_engine" in row.keys() else None) or "api",
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
     }
@@ -264,6 +278,31 @@ def update_project_context(
     if not row:
         return None
     return _row_to_project(row)
+
+
+def get_dev_engine(project_id: int) -> str:
+    """Which engine runs the dev node for this project — "api" (default) or
+    "claude_code_cli". Unknown project_id also falls back to "api" rather
+    than raising, since this is read on the run's hot path."""
+    project = get_project(project_id)
+    return project["dev_engine"] if project else "api"
+
+
+def update_dev_engine(project_id: int, engine: str) -> dict | None:
+    if engine not in DEV_ENGINES:
+        raise ValueError(f"Unknown dev_engine: {engine!r}. Expected one of {sorted(DEV_ENGINES)}.")
+    ensure_schema()
+    with _connect() as conn:
+        existing = conn.execute("SELECT id FROM projects WHERE id = ?", (project_id,)).fetchone()
+        if not existing:
+            return None
+        conn.execute(
+            "UPDATE projects SET dev_engine = ?, updated_at = ? WHERE id = ?",
+            (engine, _now_iso(), project_id),
+        )
+        row = conn.execute("SELECT * FROM projects WHERE id = ?", (project_id,)).fetchone()
+        conn.commit()
+    return _row_to_project(row) if row else None
 
 
 def create_ticket(project_id: int, title: str, description: str | None, ticket_type: str) -> dict:

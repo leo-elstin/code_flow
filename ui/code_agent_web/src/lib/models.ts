@@ -1,7 +1,11 @@
+export type DevEngine = 'api' | 'claude_code_cli';
+
 export interface ProjectSummary {
   id: number;
   name: string;
   path: string;
+  /** Which engine runs the dev node. "api" (default) or "claude_code_cli" (pilot). */
+  dev_engine: DevEngine;
   created_at: string;
   updated_at: string;
 }
