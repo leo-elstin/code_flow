@@ -17,7 +17,7 @@ logger = get_logger("graph")
 async def _enrich_linked_issues_context(state: FeatureRunState) -> str | None:
     """Pull the bodies of Jira tickets named in the request into the linked-issues
     context, so the planner sees referenced rules (e.g. a cross-project ticket
-    like OIPO-667) instead of stopping to ask about them.
+    like RULE-667) instead of stopping to ask about them.
 
     Runs on every planning pass — fresh run, resume, or retry — so answering a
     clarification and re-planning also benefits. Idempotent and best-effort: the
@@ -111,6 +111,7 @@ async def dev_node(state: FeatureRunState) -> dict:
             verifier_report=state.get("verifier_report") or None,
             run_id=run_id or None,
             prior_messages=state.get("dev_messages") or None,
+            prior_sdk_session_id=state.get("dev_sdk_session_id") or None,
         )
         logger.info(
             "Dev success run_id=%s file_changes=%d",
@@ -123,9 +124,13 @@ async def dev_node(state: FeatureRunState) -> dict:
             "truncated": result.get("truncated", False),
             "messages": result.get("messages", []),
             "dev_messages": result.get("dev_messages", []),
+            "dev_sdk_session_id": result.get("dev_sdk_session_id"),
             "dev_build_runner": result.get("dev_build_runner", {}),
         }
     except Exception:
+        # DevSdkProviderError (auth/rate-limit/crashed subprocess) is a hard
+        # failure like any other node exception — it must propagate, not be
+        # mistaken for the soft-stop path, which never raises.
         logger.exception("Dev error run_id=%s", run_id)
         raise
 

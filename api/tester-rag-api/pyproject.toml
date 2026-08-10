@@ -19,6 +19,12 @@ dependencies = [
     "jira"
 ]
 
+# claude-agent-sdk is optional: only CODE_AGENT_DEV_RUNTIME=sdk (app.agents.roles.dev_sdk,
+# app.mcp.dev_tools_server) imports it, and does so lazily inside functions — the legacy
+# dev loop and the rest of the app work with it absent. Install with `pip install -e ".[sdk]"`.
+[project.optional-dependencies]
+sdk = ["claude-agent-sdk>=0.1.0"]
+
 [build-system]
 requires = ["setuptools", "wheel"]
 build-backend = "setuptools.build_meta"

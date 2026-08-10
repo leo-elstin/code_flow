@@ -8,6 +8,7 @@ import uuid
 
 from app.agents.roles import dev as dev_mod
 from app.agents.roles.dev import _trim_dev_messages, run_dev
+from app.core.config import settings
 from app.services import run_activity
 from app.services.llm_providers.base import (
     AssistantMessage,
@@ -152,8 +153,9 @@ def test_run_dev_trims_mid_loop_not_just_at_boundaries(tmp_path, monkeypatch):
     start, final persistence), so a run that made many tool calls within one
     run_dev() call — never touching those boundaries — kept its conversation
     growing unstubbed for its entire lifetime. This is exactly what happened
-    on ticket MMA-3481: 66 tool calls across 10 steps, all in one run, before
+    on ticket PROJ-3481: 66 tool calls across 10 steps, all in one run, before
     it hit a token-per-minute rate limit."""
+    monkeypatch.setattr(settings, "CODE_AGENT_DEV_RUNTIME", "legacy")
     worktree = tmp_path / "worktree"
     (worktree / "lib").mkdir(parents=True)
     (worktree / "lib" / "big.dart").write_text("X" * 3000, encoding="utf-8")
@@ -236,8 +238,9 @@ def test_run_dev_trims_mid_loop_not_just_at_boundaries(tmp_path, monkeypatch):
 def test_run_dev_logs_per_step_token_usage(tmp_path, monkeypatch):
     """acompletion() in the dev tool-calling loop previously logged no token
     activity at all — only chat_completion_json() did — so a run like
-    MMA-3481's had no per-step token curve to diagnose after it failed on a
+    PROJ-3481's had no per-step token curve to diagnose after it failed on a
     rate limit. Each dev-loop step must now append a 'token' activity event."""
+    monkeypatch.setattr(settings, "CODE_AGENT_DEV_RUNTIME", "legacy")
     monkeypatch.setattr(run_activity, "_DB_PATH", tmp_path / "activity.db")
 
     worktree = tmp_path / "worktree"
@@ -316,10 +319,11 @@ def test_run_dev_executes_batched_writes_from_one_turn(tmp_path, monkeypatch):
 
     That only saves anything if the loop actually executes every tool call in
     a multi-call turn and pairs each result with its own tool_call_id. On
-    ticket MMA-3481 the model wrote one file per turn (steps 8 and 9 of 10),
+    ticket PROJ-3481 the model wrote one file per turn (steps 8 and 9 of 10),
     so a 4-file plan cost 4 round trips — each one re-sending the whole
     accumulated conversation — and it died on the rate limit before finishing.
     """
+    monkeypatch.setattr(settings, "CODE_AGENT_DEV_RUNTIME", "legacy")
     worktree = tmp_path / "worktree"
     (worktree / "test").mkdir(parents=True)
     project = tmp_path / "project"
@@ -483,6 +487,7 @@ def test_dev_prompt_excludes_plan_markdown_but_keeps_structured_fields(tmp_path,
     """plan_markdown is a prose restatement of fields already in the same
     plan dict (feature_summary, architecture, ...) — it's for the human plan
     review UI, not the dev loop, and was being resent on every single turn."""
+    monkeypatch.setattr(settings, "CODE_AGENT_DEV_RUNTIME", "legacy")
     worktree = tmp_path / "worktree"
     worktree.mkdir()
     project = tmp_path / "project"
