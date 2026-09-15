@@ -119,6 +119,12 @@ export interface CodeAgentRunStatus {
   current_action?: AgentActivityEvent;
   token_usage?: TokenUsage;
   context_bundle?: Record<string, any>;
+  // True when the dev node stopped at its step/turn limit rather than
+  // completing naturally. The run still proceeds to verification — this is
+  // informational, not a failure state.
+  truncated?: boolean;
+  // Claude Agent SDK session id (CODE_AGENT_DEV_RUNTIME=sdk backend only).
+  dev_sdk_session_id?: string | null;
 }
 
 export interface JiraConfig {

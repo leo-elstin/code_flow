@@ -97,6 +97,53 @@ CRITICAL — prior implementation attempts:
 """
 
 
+def _format_prior_work_block(prior_work: dict[str, Any]) -> str:
+    """Prose block describing prior implementation attempts, shared verbatim
+    between the legacy and SDK planner paths so both give the model the same
+    SELECTED-vs-reference-only framing. Empty string when nothing was found."""
+    if not prior_work.get("found"):
+        return ""
+    # Trim per-candidate so a single large branch can't starve the others out
+    # of the prompt — every candidate must stay represented (files + a diff
+    # sample), since the most useful one may be last (e.g. a human branch).
+    selected_branch = prior_work.get("selected_branch")
+    trimmed = []
+    for c in prior_work["candidates"]:
+        files = c.get("changed_files") or []
+        trimmed.append({
+            "branch": c.get("branch"),
+            "worktree_status": (
+                "SELECTED — this worktree will be created from this branch's tip"
+                if c.get("branch") == selected_branch and selected_branch
+                else "reference only — NOT present in your worktree"
+            ),
+            "match_reason": c.get("match_reason"),
+            "status": c.get("status"),
+            "changed_files": files[:50],
+            "changed_files_total": len(files),
+            "diff_sample": (c.get("diff") or "")[:2500],
+            "diff_truncated": c.get("diff_truncated") or len(c.get("diff") or "") > 2500,
+        })
+    return (
+        "=== PRIOR IMPLEMENTATION ATTEMPTS (existing branches for this ticket) ===\n"
+        "Existing branches already carry work related to this ticket. Each candidate has a "
+        "`match_reason`: `ticket_id`/`title` = a previous agent run on this ticket; "
+        "`branch_name` = a branch named after this ticket's key (likely human-authored); "
+        "`epic_branch` = a branch for this ticket's parent epic (may already contain this "
+        "story's work). `changed_files` is capped (see `changed_files_total`) and `diff_sample` "
+        "is a prefix.\n"
+        "`worktree_status` tells you whether this candidate's code will actually be on disk: "
+        "only the candidate marked SELECTED will be — its worktree is branched from that "
+        "branch's tip, so its changes are genuinely already implemented and must NOT be "
+        "re-planned. Every other candidate is reference only: its changes are NOT present in "
+        "the worktree you're planning for, so if you want to reuse them, the corresponding "
+        "files still belong in files_to_create/files_to_modify (port the proven implementation "
+        "from diff_sample rather than re-deriving it from scratch).\n"
+        + json.dumps(trimmed, indent=2)[:15000]
+        + "\n=== END PRIOR IMPLEMENTATION ATTEMPTS ===\n\n"
+    )
+
+
 def _encode_image_base64(file_path: str) -> str | None:
     """Read an image file and return its base64-encoded data URI."""
     path = Path(file_path)
@@ -120,6 +167,24 @@ async def run_planner(
     acceptance_criteria_hint: list[str] | None = None,
     clarification_answers: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
+    # Mirrors app.agents.roles.dev.run_dev's dispatch: CODE_AGENT_PLANNER_RUNTIME
+    # switches the whole planner implementation, callers (graph.py's
+    # planner_node) never need to know which one ran since both return the
+    # same shape. See app.agents.roles.planner_sdk.
+    if settings.CODE_AGENT_PLANNER_RUNTIME == "sdk":
+        from app.agents.roles.planner_sdk import run_planner_sdk
+
+        return await run_planner_sdk(
+            user_request=user_request,
+            project_path=project_path,
+            run_id=run_id,
+            ticket_id=ticket_id,
+            attachment_paths=attachment_paths,
+            linked_issues_context=linked_issues_context,
+            acceptance_criteria_hint=acceptance_criteria_hint,
+            clarification_answers=clarification_answers,
+        )
+
     if run_id:
         append_activity(
             run_id,
@@ -239,46 +304,7 @@ async def run_planner(
             + json.dumps(explorer_findings, indent=2)
             + "\n=== END EXPLORATION FINDINGS ===\n\n"
         )
-    if prior_work.get("found"):
-        # Trim per-candidate so a single large branch can't starve the others out
-        # of the prompt — every candidate must stay represented (files + a diff
-        # sample), since the most useful one may be last (e.g. a human branch).
-        selected_branch = prior_work.get("selected_branch")
-        trimmed = []
-        for c in prior_work["candidates"]:
-            files = c.get("changed_files") or []
-            trimmed.append({
-                "branch": c.get("branch"),
-                "worktree_status": (
-                    "SELECTED — this worktree will be created from this branch's tip"
-                    if c.get("branch") == selected_branch and selected_branch
-                    else "reference only — NOT present in your worktree"
-                ),
-                "match_reason": c.get("match_reason"),
-                "status": c.get("status"),
-                "changed_files": files[:50],
-                "changed_files_total": len(files),
-                "diff_sample": (c.get("diff") or "")[:2500],
-                "diff_truncated": c.get("diff_truncated") or len(c.get("diff") or "") > 2500,
-            })
-        text_content += (
-            "=== PRIOR IMPLEMENTATION ATTEMPTS (existing branches for this ticket) ===\n"
-            "Existing branches already carry work related to this ticket. Each candidate has a "
-            "`match_reason`: `ticket_id`/`title` = a previous agent run on this ticket; "
-            "`branch_name` = a branch named after this ticket's key (likely human-authored); "
-            "`epic_branch` = a branch for this ticket's parent epic (may already contain this "
-            "story's work). `changed_files` is capped (see `changed_files_total`) and `diff_sample` "
-            "is a prefix.\n"
-            "`worktree_status` tells you whether this candidate's code will actually be on disk: "
-            "only the candidate marked SELECTED will be — its worktree is branched from that "
-            "branch's tip, so its changes are genuinely already implemented and must NOT be "
-            "re-planned. Every other candidate is reference only: its changes are NOT present in "
-            "the worktree you're planning for, so if you want to reuse them, the corresponding "
-            "files still belong in files_to_create/files_to_modify (port the proven implementation "
-            "from diff_sample rather than re-deriving it from scratch).\n"
-            + json.dumps(trimmed, indent=2)[:15000]
-            + "\n=== END PRIOR IMPLEMENTATION ATTEMPTS ===\n\n"
-        )
+    text_content += _format_prior_work_block(prior_work)
     text_content += f"Discovery context:\n{context_text}\n\n"
     if clarification_answers:
         text_content += "Clarification answers from the developer (incorporate these into the plan, do NOT emit questions):\n"

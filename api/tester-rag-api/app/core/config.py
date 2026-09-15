@@ -51,7 +51,7 @@ class Settings:
         "yes",
     )
     # When true, Jira tickets named in a ticket's own text (e.g. a cross-project
-    # rule ticket like OIPO-667) are fetched and their descriptions handed to the
+    # rule ticket like RULE-667) are fetched and their descriptions handed to the
     # planner, so it can plan without pausing to ask about them.
     CODE_AGENT_RESOLVE_REFERENCED_TICKETS: bool = os.getenv(
         "CODE_AGENT_RESOLVE_REFERENCED_TICKETS", "true"
@@ -143,6 +143,67 @@ class Settings:
     CODE_AGENT_WDA_PORT: int = int(os.getenv("CODE_AGENT_WDA_PORT", "8100"))
     CODE_AGENT_WDA_BOOTSTRAP_TIMEOUT: int = int(
         os.getenv("CODE_AGENT_WDA_BOOTSTRAP_TIMEOUT", "150")
+    )
+
+    # Dev loop runtime: "legacy" (hand-rolled tool-calling loop, any configured
+    # provider) or "sdk" (Claude Agent SDK — owns context management,
+    # compaction, and the turn loop itself; see app.agents.roles.dev_sdk).
+    # Every other role (planner/verifier/qa/epic_planner/...) is unaffected —
+    # this flag scopes to the dev node only.
+    CODE_AGENT_DEV_RUNTIME: str = os.getenv("CODE_AGENT_DEV_RUNTIME", "legacy")
+    # The SDK talks to Claude directly, not through the app's own multi-provider
+    # llm_providers abstraction, so it needs its own key. python-dotenv's
+    # load_dotenv() above already puts a .env-configured value into the process
+    # environment, which is what a spawned Claude Code subprocess inherits —
+    # this is also passed explicitly via ClaudeAgentOptions.env as a second,
+    # more direct path that doesn't depend on env inheritance.
+    ANTHROPIC_API_KEY: str | None = os.getenv("ANTHROPIC_API_KEY")
+    CODE_AGENT_DEV_SDK_MODEL: str = os.getenv("CODE_AGENT_DEV_SDK_MODEL", "claude-opus-5")
+    # low|medium|high|xhigh|max. xhigh is Anthropic's own starting point for
+    # coding/agentic work; sweep down against measured runs from here.
+    CODE_AGENT_DEV_SDK_EFFORT: str = os.getenv("CODE_AGENT_DEV_SDK_EFFORT", "xhigh")
+    CODE_AGENT_DEV_SDK_MAX_TURNS: int = int(os.getenv("CODE_AGENT_DEV_SDK_MAX_TURNS", "40"))
+    # 0 disables the budget cap (unset on ClaudeAgentOptions).
+    CODE_AGENT_DEV_SDK_MAX_BUDGET_USD: float = float(
+        os.getenv("CODE_AGENT_DEV_SDK_MAX_BUDGET_USD", "0")
+    )
+
+    # Planner runtime: "legacy" (hand-rolled explorer loop + one structured
+    # chat completion) or "sdk" (Claude Agent SDK — one session does live
+    # exploration and produces the schema-validated plan; see
+    # app.agents.roles.planner_sdk). Independent of CODE_AGENT_DEV_RUNTIME —
+    # each role's runtime is switched separately.
+    CODE_AGENT_PLANNER_RUNTIME: str = os.getenv("CODE_AGENT_PLANNER_RUNTIME", "legacy")
+    CODE_AGENT_PLANNER_SDK_MODEL: str = os.getenv("CODE_AGENT_PLANNER_SDK_MODEL", "claude-opus-5")
+    CODE_AGENT_PLANNER_SDK_EFFORT: str = os.getenv("CODE_AGENT_PLANNER_SDK_EFFORT", "high")
+    # 0 (the default) = UNBOUNDED: no max_turns is passed, so Claude Code runs
+    # its own exploration loop until it decides the plan is done.
+    #
+    # A turn cap is the wrong guardrail for planning. Unlike the dev runtime —
+    # where hitting the cap is a recoverable soft stop, the code is already on
+    # disk, and the next iteration resumes the same session — a planner that
+    # runs out of turns produces NOTHING: no plan, no partial artifact, and
+    # every token spent exploring is wasted. Exploring a real codebase to
+    # produce a file-accurate plan routinely needs more turns than any number
+    # that looks reasonable in a config file (the original 20 was nowhere near
+    # enough for a Flutter repo). Bound cost with
+    # CODE_AGENT_PLANNER_SDK_MAX_BUDGET_USD instead, which fails on the thing
+    # actually worth limiting.
+    CODE_AGENT_PLANNER_SDK_MAX_TURNS: int = int(
+        os.getenv("CODE_AGENT_PLANNER_SDK_MAX_TURNS", "0")
+    )
+    # 0 disables the budget cap. Only meaningful on API-key auth; a
+    # subscription-authenticated run is limited by the subscription instead.
+    CODE_AGENT_PLANNER_SDK_MAX_BUDGET_USD: float = float(
+        os.getenv("CODE_AGENT_PLANNER_SDK_MAX_BUDGET_USD", "0")
+    )
+    # Retries for TRANSIENT planner failures only (dropped stream, provider
+    # overload, rate limit) — see sdk_common.is_transient_sdk_error. Retrying
+    # is safe here because planning is read-only: a fresh attempt duplicates
+    # no work and leaves nothing behind. Non-transient errors never retry.
+    # 0 disables retrying.
+    CODE_AGENT_PLANNER_SDK_MAX_RETRIES: int = int(
+        os.getenv("CODE_AGENT_PLANNER_SDK_MAX_RETRIES", "2")
     )
 
 

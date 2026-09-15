@@ -102,6 +102,8 @@ def _to_response(state: dict) -> RunStatusResponse:
         error=state.get("error"),
         merge_report=state.get("merge_report") or None,
         merge_preview=merge_preview,
+        truncated=bool(state.get("truncated", False)),
+        dev_sdk_session_id=state.get("dev_sdk_session_id"),
         is_running=runner._task_running(run_id),
         current_action=current_action,
         token_usage=token_usage,

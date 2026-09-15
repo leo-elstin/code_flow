@@ -264,6 +264,15 @@ class RunStatusResponse(BaseModel):
     is_running: bool = False
     current_action: CurrentActionResponse | None = None
     token_usage: TokenUsageResponse | None = None
+    # True when the dev node stopped at its step/turn limit rather than
+    # completing naturally — the run still proceeds to verification (a retry
+    # from here continues rather than starting over), but the UI should show
+    # this distinctly from a normal pass.
+    truncated: bool = False
+    # Claude Agent SDK session id (CODE_AGENT_DEV_RUNTIME=sdk only). Present
+    # once a dev iteration has run under that runtime; null on the legacy
+    # runtime or before the first dev iteration.
+    dev_sdk_session_id: str | None = None
 
 
 class JiraSyncResponse(BaseModel):

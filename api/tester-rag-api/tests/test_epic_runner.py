@@ -392,9 +392,9 @@ def test_child_clarification_fails_fast(monkeypatch):
 
 def test_epic_integration_branch_naming():
     # Jira-sourced epic -> feature/<KEY>
-    assert er_mod._epic_integration_branch("run-1", "MMA-3480") == "feature/MMA-3480"
+    assert er_mod._epic_integration_branch("run-1", "PROJ-3480") == "feature/PROJ-3480"
     # whitespace tolerated
-    assert er_mod._epic_integration_branch("run-1", " MMA-3480 ") == "feature/MMA-3480"
+    assert er_mod._epic_integration_branch("run-1", " PROJ-3480 ") == "feature/PROJ-3480"
     # no jira key -> run-scoped fallback
     assert er_mod._epic_integration_branch("run-xyz", None) == "agent/epic-run-xyz"
     assert er_mod._epic_integration_branch("run-xyz", "") == "agent/epic-run-xyz"

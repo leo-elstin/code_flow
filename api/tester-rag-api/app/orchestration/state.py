@@ -48,6 +48,11 @@ class FeatureRunState(TypedDict, total=False):
     # re-discovering the codebase. Replace semantics (last write wins), NOT append —
     # this is distinct from `messages` (the append-only UI activity log).
     dev_messages: list[dict[str, Any]]
+    # Claude Agent SDK session id (CODE_AGENT_DEV_RUNTIME=sdk only). Replace
+    # semantics like dev_messages: a step-limit soft stop persists this so the
+    # next dev iteration resumes the same SDK session (`resume=`) instead of
+    # restarting the conversation from scratch. None on the legacy runtime.
+    dev_sdk_session_id: str | None
     # Result of the build_runner pass the dev node ran at finalize: {passed, signature}.
     # The verifier reuses it (skips its own build_runner) when the source signature is
     # unchanged, so build_runner runs at most once per dev→verify cycle.
@@ -87,6 +92,7 @@ def initial_state(run_id: str, user_request: str, project_path: str) -> FeatureR
         verifier_report={},
         qa_report={},
         messages=[],
+        dev_sdk_session_id=None,
         error=None,
         approved=False,
         rejected=False,

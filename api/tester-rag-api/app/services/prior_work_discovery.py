@@ -9,7 +9,7 @@ Two independent sources are searched and merged:
    found via the run index, keyed by ticket id or a same-titled ticket.
 
 2. **Branch / ref scan** — humans (or other tools) create branches like
-   ``feature/MMA-3480-multi-container`` that the run index knows nothing about.
+   ``feature/PROJ-3480-multi-container`` that the run index knows nothing about.
    These are found by scanning every branch whose name contains the ticket's
    Jira key — or its parent epic's key, so a child story still sees the epic
    branch — and diffing it against the repo's real default branch.

@@ -13,18 +13,18 @@ from app.services.jira_service import (
 # -- extract_jira_keys -------------------------------------------------------
 
 def test_extract_finds_keys_in_order_and_dedupes():
-    text = "Blocked by OIPO-667. See also MMA-3481 and OIPO-667 again."
-    assert extract_jira_keys(text) == ["OIPO-667", "MMA-3481"]
+    text = "Blocked by RULE-667. See also PROJ-3481 and RULE-667 again."
+    assert extract_jira_keys(text) == ["RULE-667", "PROJ-3481"]
 
 
 def test_extract_excludes_own_key():
-    text = "This is MMA-3481; rules per OIPO-667."
-    assert extract_jira_keys(text, exclude={"MMA-3481"}) == ["OIPO-667"]
+    text = "This is PROJ-3481; rules per RULE-667."
+    assert extract_jira_keys(text, exclude={"PROJ-3481"}) == ["RULE-667"]
 
 
 def test_extract_filters_non_jira_tokens():
-    text = "Encode as UTF-8 and hash with SHA-256; rule is OIPO-667."
-    assert extract_jira_keys(text) == ["OIPO-667"]
+    text = "Encode as UTF-8 and hash with SHA-256; rule is RULE-667."
+    assert extract_jira_keys(text) == ["RULE-667"]
 
 
 def test_extract_handles_empty():
@@ -68,31 +68,31 @@ def configured(monkeypatch):
 
 def test_returns_empty_when_not_configured(monkeypatch):
     monkeypatch.setattr(js.JiraService, "is_configured", staticmethod(lambda: False))
-    assert build_referenced_tickets_context("mentions OIPO-667") == ""
+    assert build_referenced_tickets_context("mentions RULE-667") == ""
 
 
 def test_fetches_and_formats_referenced_body(configured):
-    svc = configured(_FakeService({"OIPO-667": "Block DRY+REEF mixes."}))
-    out = build_referenced_tickets_context("rules per OIPO-667", exclude={"MMA-3481"})
-    assert svc.fetched == ["OIPO-667"]
-    assert "### OIPO-667 (Done) — Summary of OIPO-667" in out
+    svc = configured(_FakeService({"RULE-667": "Block DRY+REEF mixes."}))
+    out = build_referenced_tickets_context("rules per RULE-667", exclude={"PROJ-3481"})
+    assert svc.fetched == ["RULE-667"]
+    assert "### RULE-667 (Done) — Summary of RULE-667" in out
     assert "Block DRY+REEF mixes." in out
     assert out.startswith("Referenced Jira tickets")
 
 
 def test_skips_unfetchable_tickets(configured):
     svc = configured(
-        _FakeService({"OIPO-667": "rule body"}, missing={"OIPO-999"})
+        _FakeService({"RULE-667": "rule body"}, missing={"RULE-999"})
     )
-    out = build_referenced_tickets_context("see OIPO-999 and OIPO-667")
-    assert svc.fetched == ["OIPO-999", "OIPO-667"]
-    assert "OIPO-999" not in out
-    assert "OIPO-667" in out
+    out = build_referenced_tickets_context("see RULE-999 and RULE-667")
+    assert svc.fetched == ["RULE-999", "RULE-667"]
+    assert "RULE-999" not in out
+    assert "RULE-667" in out
 
 
 def test_returns_empty_when_all_unfetchable(configured):
-    configured(_FakeService({}, missing={"OIPO-999"}))
-    assert build_referenced_tickets_context("see OIPO-999") == ""
+    configured(_FakeService({}, missing={"RULE-999"}))
+    assert build_referenced_tickets_context("see RULE-999") == ""
 
 
 def test_respects_max_tickets_cap(configured, monkeypatch):
@@ -105,9 +105,9 @@ def test_respects_max_tickets_cap(configured, monkeypatch):
 
 
 def test_truncates_long_body(configured):
-    svc = configured(_FakeService({"OIPO-667": "x" * 5000}))
+    svc = configured(_FakeService({"RULE-667": "x" * 5000}))
     out = build_referenced_tickets_context(
-        "OIPO-667", body_cap=100
+        "RULE-667", body_cap=100
     )
     assert "…[truncated]" in out
     assert out.count("x") == 100

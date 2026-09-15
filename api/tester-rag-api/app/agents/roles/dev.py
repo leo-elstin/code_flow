@@ -494,7 +494,27 @@ async def run_dev(
     verifier_report: dict[str, Any] | None = None,
     run_id: str | None = None,
     prior_messages: list[dict[str, Any]] | None = None,
+    prior_sdk_session_id: str | None = None,
 ) -> dict[str, Any]:
+    # CODE_AGENT_DEV_RUNTIME switches the whole dev loop implementation: "sdk"
+    # drives the Claude Agent SDK (app.agents.roles.dev_sdk) instead of the
+    # hand-rolled loop below. Dispatch lives here (not in graph.py) so
+    # dev_node's contract — and every other caller of run_dev — never needs to
+    # know which implementation actually ran; both return the same shape,
+    # dev_sdk.run_dev_sdk additionally carrying dev_sdk_session_id.
+    if settings.CODE_AGENT_DEV_RUNTIME == "sdk":
+        from app.agents.roles.dev_sdk import run_dev_sdk
+
+        return await run_dev_sdk(
+            plan=plan,
+            context_bundle=context_bundle,
+            worktree_path=worktree_path,
+            project_path=project_path,
+            verifier_report=verifier_report,
+            run_id=run_id,
+            prior_session_id=prior_sdk_session_id,
+        )
+
     # When prior_messages is supplied (a retry / step-limit continuation), the dev
     # loop resumes that conversation instead of rebuilding the system prompt and
     # re-running discovery — the earlier reads and reasoning are already in context.
@@ -777,6 +797,9 @@ async def run_dev(
         # Full tool-calling conversation (trimmed) so the next iteration can resume
         # from here instead of restarting discovery.
         "dev_messages": _trim_dev_messages(messages),
+        # Always present so callers can key off this field regardless of which
+        # dev runtime ran — None here, populated by the SDK path.
+        "dev_sdk_session_id": None,
         # {passed, signature} so the verifier can skip a redundant build_runner run.
         "dev_build_runner": {
             "passed": bool(build_runner.get("passed", True)),
