@@ -78,7 +78,7 @@ def _epic_integration_branch(epic_run_id: str, epic_jira_key: str | None) -> str
     """Human-friendly integration branch per epic.
 
     A Jira-sourced epic lands all its stories on ``feature/<JIRA-KEY>``
-    (e.g. ``feature/MMA-3480``) in the real repo, so the changes live on a
+    (e.g. ``feature/PROJ-3480``) in the real repo, so the changes live on a
     named branch the user can check out. Falls back to a run-scoped name for
     epics with no Jira key."""
     if epic_jira_key and epic_jira_key.strip():

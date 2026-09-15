@@ -126,26 +126,26 @@ def test_ref_exists(git_repo):
 
 
 def test_list_branches_matching_finds_by_token_and_excludes_agent(git_repo):
-    subprocess.run(["git", "branch", "feature/MMA-3480-multi-container"], cwd=git_repo, check=True)
-    subprocess.run(["git", "branch", "feature/MMA-9999-unrelated"], cwd=git_repo, check=True)
-    subprocess.run(["git", "branch", "agent/MMA-3480-should-be-ignored"], cwd=git_repo, check=True)
+    subprocess.run(["git", "branch", "feature/PROJ-3480-multi-container"], cwd=git_repo, check=True)
+    subprocess.run(["git", "branch", "feature/PROJ-9999-unrelated"], cwd=git_repo, check=True)
+    subprocess.run(["git", "branch", "agent/PROJ-3480-should-be-ignored"], cwd=git_repo, check=True)
 
-    matches = git_tools.list_branches_matching(str(git_repo), ["MMA-3480"])
-    assert "feature/MMA-3480-multi-container" in matches
-    assert "feature/MMA-9999-unrelated" not in matches
+    matches = git_tools.list_branches_matching(str(git_repo), ["PROJ-3480"])
+    assert "feature/PROJ-3480-multi-container" in matches
+    assert "feature/PROJ-9999-unrelated" not in matches
     assert all(not m.startswith("agent/") for m in matches)
 
 
 def test_get_branch_diff_summary_defaults_base_to_resolved_default(git_repo):
-    subprocess.run(["git", "checkout", "-b", "feature/MMA-1-x"], cwd=git_repo, check=True, capture_output=True)
+    subprocess.run(["git", "checkout", "-b", "feature/PROJ-1-x"], cwd=git_repo, check=True, capture_output=True)
     (git_repo / "f.dart").write_text("class X {}\n", encoding="utf-8")
     subprocess.run(["git", "add", "."], cwd=git_repo, check=True)
     subprocess.run(["git", "commit", "-m", "x"], cwd=git_repo, check=True)
     subprocess.run(["git", "checkout", "main"], cwd=git_repo, check=True, capture_output=True)
 
-    summary = git_tools.get_branch_diff_summary(str(git_repo), "feature/MMA-1-x")
+    summary = git_tools.get_branch_diff_summary(str(git_repo), "feature/PROJ-1-x")
     assert summary["base"] == "main"
-    assert summary["branch"] == "feature/MMA-1-x"
+    assert summary["branch"] == "feature/PROJ-1-x"
     assert summary["changed_files"] == ["f.dart"]
 
 
@@ -234,14 +234,14 @@ def test_discover_prior_work_matches_by_title_fallback(monkeypatch):
 
 
 def test_discover_prior_work_finds_epic_branch_for_child_story(monkeypatch):
-    # Child story MMA-3481 whose parent epic is MMA-3480; a human branch exists
+    # Child story PROJ-3481 whose parent epic is PROJ-3480; a human branch exists
     # for the epic but nothing in run history references the child.
     monkeypatch.setattr(
         prior_work_discovery.project_ticket_store,
         "get_ticket",
         lambda tid: {
             "id": tid, "project_id": 1, "title": "Select multiple container types",
-            "jira_key": "MMA-3481", "jira_parent_key": "MMA-3480",
+            "jira_key": "PROJ-3481", "jira_parent_key": "PROJ-3480",
         },
     )
     monkeypatch.setattr(prior_work_discovery.project_ticket_store, "list_tickets", lambda pid: [])
@@ -254,7 +254,7 @@ def test_discover_prior_work_finds_epic_branch_for_child_story(monkeypatch):
 
     def fake_list_branches(project_path, tokens):
         seen_tokens["tokens"] = tokens
-        return ["feature/MMA-3480-multi-container"]
+        return ["feature/PROJ-3480-multi-container"]
 
     monkeypatch.setattr(prior_work_discovery.git_tools, "list_branches_matching", fake_list_branches)
     monkeypatch.setattr(
@@ -268,10 +268,10 @@ def test_discover_prior_work_finds_epic_branch_for_child_story(monkeypatch):
 
     result = prior_work_discovery.discover_prior_work(15, "/tmp/proj")
     # Both the ticket's own key and the parent epic key are offered as scan tokens.
-    assert seen_tokens["tokens"] == ["MMA-3481", "MMA-3480"]
+    assert seen_tokens["tokens"] == ["PROJ-3481", "PROJ-3480"]
     assert result["found"] is True
     cand = result["candidates"][0]
-    assert cand["branch"] == "feature/MMA-3480-multi-container"
+    assert cand["branch"] == "feature/PROJ-3480-multi-container"
     assert cand["match_reason"] == "epic_branch"
     assert cand["run_id"] is None
     assert "multi_container_cubit.dart" in cand["changed_files"][0]
@@ -302,8 +302,8 @@ def _candidate(branch, match_reason, changed_files=None):
 def test_select_base_ref_prefers_ticket_id_over_branch_name_and_epic_branch():
     prior_work = {
         "candidates": [
-            _candidate("feature/MMA-3480-x", "epic_branch"),
-            _candidate("feature/MMA-3481-x", "branch_name"),
+            _candidate("feature/PROJ-3480-x", "epic_branch"),
+            _candidate("feature/PROJ-3481-x", "branch_name"),
             _candidate("agent/r1", "ticket_id"),
         ]
     }
@@ -314,12 +314,12 @@ def test_select_base_ref_prefers_ticket_id_over_branch_name_and_epic_branch():
 def test_select_base_ref_prefers_branch_name_over_epic_branch():
     prior_work = {
         "candidates": [
-            _candidate("feature/MMA-3480-x", "epic_branch"),
-            _candidate("feature/MMA-3481-x", "branch_name"),
+            _candidate("feature/PROJ-3480-x", "epic_branch"),
+            _candidate("feature/PROJ-3481-x", "branch_name"),
         ]
     }
     winner = prior_work_discovery.select_base_ref(prior_work)
-    assert winner["branch"] == "feature/MMA-3481-x"
+    assert winner["branch"] == "feature/PROJ-3481-x"
 
 
 def test_select_base_ref_excludes_title_matches():
@@ -344,10 +344,10 @@ def test_select_base_ref_returns_none_when_no_candidates():
 def test_resolve_discovered_base_ref_returns_selected_branch_when_it_still_resolves(git_repo):
     from app.orchestration.runner import _resolve_discovered_base_ref
 
-    subprocess.run(["git", "branch", "feature/MMA-3480-multi-container"], cwd=git_repo, check=True)
-    context_bundle = {"prior_work": {"selected_branch": "feature/MMA-3480-multi-container"}}
+    subprocess.run(["git", "branch", "feature/PROJ-3480-multi-container"], cwd=git_repo, check=True)
+    context_bundle = {"prior_work": {"selected_branch": "feature/PROJ-3480-multi-container"}}
 
-    assert _resolve_discovered_base_ref(str(git_repo), context_bundle) == "feature/MMA-3480-multi-container"
+    assert _resolve_discovered_base_ref(str(git_repo), context_bundle) == "feature/PROJ-3480-multi-container"
 
 
 def test_resolve_discovered_base_ref_falls_back_to_none_when_branch_deleted(git_repo):
